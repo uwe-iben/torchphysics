@@ -22,7 +22,7 @@ def time_evolution(A, B, C, D, u, x, t):
     for k in range(0, len(t)-1):
         y[:, k] = C@x.ravel() + D@u[:, k]
         x = A@x.ravel() + B@u[:, k]
-    return(pd.DataFrame(data=y.T, index=t))
+    return(pd.DataFrame(data=y.T, index=t, columns=["state_space"]))
 
 def state_space_dof_1(u, x0):
     #  Generate some data
@@ -42,17 +42,14 @@ def analytical_dof_1(u, x0):
     delta = damping / (2 * mass)
     omega_0 = np.sqrt(stiffness / mass)
     omega_d = np.sqrt(omega_0**2 - delta**2)
-    y_stat = np.exp(-delta * t) * (((x0[1] + delta * x0[0]) / omega_d) * np.sin(omega_d * t) + x0[0] * np.cos(omega_d * t))
-    return pd.DataFrame(data=y_stat.T, index=t)
-# u = np.array([sg.unit_impulse(len(t), idx="mid")])
-u = np.array([sg.unit_impulse(len(t), idx=0)])
+    y = np.exp(-delta * t) * (((x0[1] + delta * x0[0]) / omega_d) * np.sin(omega_d * t) + x0[0] * np.cos(omega_d * t))
+    return pd.DataFrame(data=y.T, index=t)
 
-x0 = np.array([[0], [0]])
-y = state_space_dof_1(u, x0)
-y.plot()
+u = np.array([sg.unit_impulse(len(t), idx=0)])
 x0 = np.array([[1], [0]])
-y_ana = analytical_dof_1(u, x0)
-y_ana.plot()
+y = state_space_dof_1(u, x0)
+y["analytical"] = analytical_dof_1(u, x0)
+y.plot()
 
     
     
