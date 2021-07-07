@@ -8,6 +8,38 @@ Created on Mon Jul  5 14:35:18 2021
 import numpy as np
 import pandas as pd
 from scipy import signal as sg
+import matplotlib.pyplot as plt
+import matplotlib
+
+
+import torch
+import numpy as np
+import pytorch_lightning as pl
+from timeit import default_timer as timer
+
+from neural_diff_eq.problem import Variable
+from neural_diff_eq.setting import Setting
+from neural_diff_eq.problem.domain import (Rectangle,
+                                           Interval)
+from neural_diff_eq.problem.condition import (DirichletCondition,
+                                              DiffEqCondition,
+                                              DataCondition)
+from neural_diff_eq.models.fcn import SimpleFCN
+from neural_diff_eq import PINNModule
+from neural_diff_eq.utils import laplacian, gradient
+from neural_diff_eq.utils.fdm import FDM, create_validation_data
+from neural_diff_eq.utils.plot import Plotter
+from neural_diff_eq.utils.evaluation import (get_min_max_inside,
+                                             get_min_max_boundary)
+from neural_diff_eq.setting import Setting
+
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "" # select GPUs to use
+
+#pl.seed_everything(43) # set a global seed
+torch.cuda.is_available()
+
+matplotlib.style.use('default')
 
 stiffness = 1e4
 damping = 4
@@ -25,8 +57,6 @@ def time_evolution(A, B, C, D, u, x, t):
     return(pd.DataFrame(data=y.T, index=t, columns=["state_space"]))
 
 def state_space_dof_1(u, x0):
-    #  Generate some data
-
     Ac = np.array([[0, 1], [-stiffness/mass, -damping/mass]])
     Bc = np.array([[0], [1/mass]])
     Cc = np.array([[1, 0]])
@@ -45,11 +75,59 @@ def analytical_dof_1(u, x0):
     y = np.exp(-delta * t) * (((x0[1] + delta * x0[0]) / omega_d) * np.sin(omega_d * t) + x0[0] * np.cos(omega_d * t))
     return pd.DataFrame(data=y.T, index=t)
 
-u = np.array([sg.unit_impulse(len(t), idx=0)])
+#%% Analytical solution
+dirac = np.array([sg.unit_impulse(len(t), idx=0)])
 x0 = np.array([[1], [0]])
-y = state_space_dof_1(u, x0)
-y["analytical"] = analytical_dof_1(u, x0)
+y = state_space_dof_1(dirac, x0)
+y["analytical"] = analytical_dof_1(dirac, x0)
 y.plot()
+
+#%% PINN approach
+# u_tt + delta * u_t + omega**2 * u = f(t)
+
+norm = torch.nn.MSELoss()
+
+time = Variable(name='time',
+              order=1,
+              domain=Interval(low_bound=0,
+                              up_bound=t_end),
+              train_conditions={},
+              val_conditions={})
+c = Variable(name='stiffness',
+              order=0,
+              domain=Interval(low_bound=1e3,
+                              up_bound=1e5),
+              train_conditions={},
+              val_conditions={})
+
+# the same can be done to achieve an initial condition for the time axis:
+def time_dirichlet_fun(input):
+    return np.ones_like(input['time'])
+# to get only initial (and not end-) values, we can set boundary_sampling_strategy to sample
+# only one bound of the interval
+time.add_train_condition(DirichletCondition(dirichlet_fun=time_dirichlet_fun,
+                                          name='dirichlet',
+                                          norm=norm,
+                                          dataset_size=150,
+                                          boundary_sampling_strategy='lower_bound_only',
+                                          data_plot_variables=True))
+
+# a pde function handle takes the output and the input (as a dict again) of the network. We can use
+# functions like 'laplacian' from the utils part to compute common differential operators.
+def ode_oscillation(u, input):
+    return laplacian(u, input['t']) + gradient(u, input['t']) + u
+
+# a DiffEqCondition works similar to the boundary condiitions
+train_cond = DiffEqCondition(pde=ode_oscillation,
+                              name='ode_oscillation',
+                              norm=norm,
+                              sampling_strategy='random',
+                              weight=1.0,
+                              dataset_size=5000,
+                              data_plot_variables=('t'))
+
+
+
 
     
     
