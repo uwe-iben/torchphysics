@@ -1,9 +1,9 @@
 import pytest
 import numpy as np
 
-from neural_diff_eq.problem.domain.domain1D import Interval
-from neural_diff_eq.problem.domain.domain2D import (Rectangle, Circle, Triangle)
-from neural_diff_eq.problem.domain.domain_operations import (Cut, Union,
+from torchphysics.problem.domain.domain1D import Interval
+from torchphysics.problem.domain.domain2D import (Rectangle, Circle, Triangle)
+from torchphysics.problem.domain.domain_operations import (Cut, Union,
                                                              Intersection,
                                                              Domain_operation)
 
@@ -635,3 +635,12 @@ def test_serialize_intersection():
     assert dct['dim'] == 2
     assert dct['tol'] == 1e-06
     assert dct['name'] == '(Rectangle intersect Circle)'
+
+
+def test_grid_for_plots_intersection():
+    R, C = _create_domains()
+    U = Intersection(R, C)
+    points = U.grid_for_plots(200)
+    inside = U.is_inside(points)
+    on_bound = U.is_on_boundary(points)
+    assert np.logical_or(inside, on_bound).all()  

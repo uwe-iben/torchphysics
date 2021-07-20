@@ -52,6 +52,11 @@ class PINNModule(pl.LightningModule):
         self.log_plotter = log_plotter
         self.variable_dims = None
 
+    def to(self, device):
+        if self.trainer is not None:
+            self.trainer.datamodule.parameters.to(device)
+        return super().to(device)
+
     def serialize(self):
         dct = {}
         dct['name'] = 'PINNModule'
@@ -94,19 +99,23 @@ class PINNModule(pl.LightningModule):
 
     def on_train_start(self):
         # register the variables on which the model is trained
-        self.variable_dims = {k: v.domain.dim for (k, v) in self.trainer.datamodule.variables.items()}
+        self.variable_dims = {k: v.domain.dim for (
+            k, v) in self.trainer.datamodule.variables.items()}
         # log summary to tensorboard
-        self.logger.experiment.add_text(
-            tag='summary',
-            text_string=json.dumps(
-                self.serialize(),
-                indent='&emsp; &emsp;').replace('\n', '  \n')
-        )
+        if self.logger is not None:
+            self.logger.experiment.add_text(
+                tag='summary',
+                text_string=json.dumps(
+                    self.serialize(),
+                    indent='&emsp; &emsp;').replace('\n', '  \n')
+            )
 
     def configure_optimizers(self):
-        optimizer = self.optimizer(self.model.parameters(),
-                                   lr=self.lr,
-                                   **self.optim_params)
+        optimizer = self.optimizer(
+            list(self.model.parameters()) +
+            list(self.trainer.datamodule.parameters.values()),
+            lr=self.lr,
+            **self.optim_params)
         if self.scheduler is None:
             return optimizer
         lr_scheduler = self.scheduler['class'](
@@ -120,7 +129,8 @@ class PINNModule(pl.LightningModule):
         return dataloader_dict
 
     def training_step(self, batch, batch_idx):
-        loss = torch.zeros(1, device=self.device, requires_grad=True) # maybe this slows down training a bit
+        # maybe this slows down training a bit
+        loss = torch.zeros(1, device=self.device, requires_grad=True)
         conditions = self.trainer.datamodule.get_train_conditions()
         for name in conditions:
             data = batch[name]
@@ -134,6 +144,9 @@ class PINNModule(pl.LightningModule):
         self.log('loss/train', loss)
         if self.log_plotter is not None:
             self.log_plot()
+        for pname, p in self.trainer.datamodule.parameters.items():
+            if p.shape == [1]:
+                self.log(pname, p.detach())
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -150,7 +163,7 @@ class PINNModule(pl.LightningModule):
         self.log('loss/val', loss)
 
     def log_condition_data_plot(self, name, condition, data):
-        if self.global_step % 10 == 0:
+        if self.global_step % 10 == 0 and self.logger is not None:
             if condition.get_data_plot_variables() is not None:
                 fig = _scatter(plot_variables=condition.get_data_plot_variables(),
                                data=data)
@@ -159,7 +172,8 @@ class PINNModule(pl.LightningModule):
                                                   global_step=self.global_step)
 
     def log_plot(self):
-        if self.global_step % self.log_plotter.log_interval == 0:
+        if self.global_step % self.log_plotter.log_interval == 0 \
+             and self.logger is not None:
             fig = self.log_plotter.plot(model=self.model,
                                         device=self.device)
             self.logger.experiment.add_figure(tag='plot',
