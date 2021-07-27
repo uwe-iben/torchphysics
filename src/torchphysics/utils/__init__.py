@@ -3,4 +3,8 @@ from .differentialoperators import (laplacian,
                                     grad,
                                     div,
                                     jac,
-                                    partial)
+                                    partial,
+                                    convective,
+                                    normal_derivative)
+
+from .helper import apply_to_batch, apply_user_fun
