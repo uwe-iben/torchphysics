@@ -15,13 +15,14 @@ import matplotlib
 import torch
 import numpy as np
 import pytorch_lightning as pl
+import pytorch
 from timeit import default_timer as timer
 
 from neural_diff_eq.problem import Variable
 from neural_diff_eq.setting import Setting
 from neural_diff_eq.problem.domain import (Rectangle,
                                            Interval)
-from neural_diff_eq.problem.condition import (DirichletCondition,
+from neural_diff_eq.problem.condition import (DirichletCondition,NeumannCondition,
                                               DiffEqCondition,
                                               DataCondition)
 from neural_diff_eq.models.fcn import SimpleFCN
@@ -103,6 +104,10 @@ c = Variable(name='stiffness',
 # the same can be done to achieve an initial condition for the time axis:
 def time_dirichlet_fun(input):
     return np.ones_like(input['time'])
+
+def time_neumann_fun(input):
+    return np.zeros_like(input['time'])
+
 # to get only initial (and not end-) values, we can set boundary_sampling_strategy to sample
 # only one bound of the interval
 time.add_train_condition(DirichletCondition(dirichlet_fun=time_dirichlet_fun,
@@ -112,10 +117,17 @@ time.add_train_condition(DirichletCondition(dirichlet_fun=time_dirichlet_fun,
                                           boundary_sampling_strategy='lower_bound_only',
                                           data_plot_variables=True))
 
+time.add_train_condition(NeumannCondition(neumann_fun=time_neumann_fun,
+                                          name='neumann',
+                                          norm=norm,
+                                          dataset_size=150,
+                                          boundary_sampling_strategy='lower_bound_only',
+                                          data_plot_variables=True))
+
 # a pde function handle takes the output and the input (as a dict again) of the network. We can use
 # functions like 'laplacian' from the utils part to compute common differential operators.
 def ode_oscillation(u, input):
-    return laplacian(u, input['t']) + gradient(u, input['t']) + u
+    return laplacian(u, input['time']) + (damping / (2 * mass)) * gradient(u, input['time']) + pytorch.sqrt(input["stiffness"]/mass) * u
 
 # a DiffEqCondition works similar to the boundary condiitions
 train_cond = DiffEqCondition(pde=ode_oscillation,
@@ -124,7 +136,7 @@ train_cond = DiffEqCondition(pde=ode_oscillation,
                               sampling_strategy='random',
                               weight=1.0,
                               dataset_size=5000,
-                              data_plot_variables=('t'))
+                              data_plot_variables=False)#)('time'))
 
 
 
