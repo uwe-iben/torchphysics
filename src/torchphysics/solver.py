@@ -31,7 +31,7 @@ class PINNModule(pl.LightningModule):
         The (initial) learning rate of the used optimizer. Should be set
         to 1e-3 for Adam
     log_plotter : Plotter
-        A plotter from utils.plot, that plots the solution at desired 
+        A plotter from utils.plot, that plots the solution at desired
         training epochs to the tensorboard
     scheduler : torch.optim.lr_scheduler
         A scheduler to change/adjust the learning rate based on the number of epochs
@@ -52,6 +52,11 @@ class PINNModule(pl.LightningModule):
         self.log_plotter = log_plotter
         self.variable_dims = None
 
+    def to(self, device):
+        if self.trainer is not None:
+            self.trainer.datamodule.parameters.to(device)
+        return super().to(device)
+
     def serialize(self):
         dct = {}
         dct['name'] = 'PINNModule'
@@ -71,56 +76,41 @@ class PINNModule(pl.LightningModule):
         Run the model on a given input batch, without tracking gradients.
         """
         assert isinstance(inputs, Dict), "Please pass a dict of variables and data."
-        # check whether the input has the expected variables and shape
-        if self.variable_dims is None:
-            print("""The correct input variables for the model have not been
-                     set yet. This can lead to unexpected behaiour. Please train
-                     the model or set the module.variable_dims property.""")
-        try:
-            ordered_inputs = {}
-            for k in self.variable_dims:
-                if inputs[k].shape[1] != self.variable_dims[k]:
-                    print(f"""The input {k} has the wrong dimension. This can
-                              lead to unexpected behaviour.""")
-                ordered_inputs[k] = inputs[k]
-            if len(ordered_inputs) < len(inputs):
-                raise KeyError
-        except KeyError:
-            print(f"""The model was trained on Variables with different names.
-                      This can lead to unexpected behaviour.
-                      Please use Variables {self.variable_dims}.""")
+        return self.model.forward(inputs)
 
-        return self.model.forward(ordered_inputs)
+    @property
+    def output_dim(self):
+        return self.model.output_dim
+
+    @property
+    def input_dim(self):
+        return self.model.input_dim
 
     def on_train_start(self):
-        # register the variables on which the model is trained
-        self.variable_dims = {k: v.domain.dim for (k, v) in self.trainer.datamodule.variables.items()}
         # log summary to tensorboard
-        self.logger.experiment.add_text(
-            tag='summary',
-            text_string=json.dumps(
-                self.serialize(),
-                indent='&emsp; &emsp;').replace('\n', '  \n')
-        )
+        if self.logger is not None:
+            self.logger.experiment.add_text(
+                tag='summary',
+                text_string=json.dumps(
+                    self.serialize(),
+                    indent='&emsp; &emsp;').replace('\n', '  \n')
+            )
 
     def configure_optimizers(self):
-        optimizer = self.optimizer(self.model.parameters(),
-                                   lr=self.lr,
-                                   **self.optim_params)
+        optimizer = self.optimizer(
+            list(self.model.parameters()) +
+            list(self.trainer.datamodule.parameters.values()),
+            lr=self.lr,
+            **self.optim_params)
         if self.scheduler is None:
             return optimizer
         lr_scheduler = self.scheduler['class'](
             optimizer, **self.scheduler['args'])
         return [optimizer], [lr_scheduler]
 
-    def _get_dataloader(self, conditions):
-        dataloader_dict = {}
-        for name in conditions:
-            dataloader_dict[name] = conditions[name].get_dataloader()
-        return dataloader_dict
-
     def training_step(self, batch, batch_idx):
-        loss = torch.zeros(1, device=self.device, requires_grad=True) # maybe this slows down training a bit
+        # maybe this slows down training a bit
+        loss = torch.zeros(1, device=self.device, requires_grad=True)
         conditions = self.trainer.datamodule.get_train_conditions()
         for name in conditions:
             data = batch[name]
@@ -134,6 +124,9 @@ class PINNModule(pl.LightningModule):
         self.log('loss/train', loss)
         if self.log_plotter is not None:
             self.log_plot()
+        for pname, p in self.trainer.datamodule.parameters.items():
+            if p.shape == [1]:
+                self.log(pname, p.detach())
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -150,7 +143,7 @@ class PINNModule(pl.LightningModule):
         self.log('loss/val', loss)
 
     def log_condition_data_plot(self, name, condition, data):
-        if self.global_step % 10 == 0:
+        if self.global_step % 10 == 0 and self.logger is not None:
             if condition.get_data_plot_variables() is not None:
                 fig = _scatter(plot_variables=condition.get_data_plot_variables(),
                                data=data)
@@ -159,7 +152,8 @@ class PINNModule(pl.LightningModule):
                                                   global_step=self.global_step)
 
     def log_plot(self):
-        if self.global_step % self.log_plotter.log_interval == 0:
+        if self.global_step % self.log_plotter.log_interval == 0 \
+             and self.logger is not None:
             fig = self.log_plotter.plot(model=self.model,
                                         device=self.device)
             self.logger.experiment.add_figure(tag='plot',

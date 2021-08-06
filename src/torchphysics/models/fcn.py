@@ -20,13 +20,11 @@ class BlockFCN(DiffEqModel):
         amount of output neurons
     """
 
-    def __init__(self, input_dim, blocks=3, width=100, output_dim=1):
-        super().__init__()
-
-        self.input_dim = input_dim
+    def __init__(self, variable_dims, solution_dims, blocks=3, width=100):
+        super().__init__(variable_dims=variable_dims,
+                         solution_dims=solution_dims)
         self.blocks = blocks
         self.width = width
-        self.output_dim = output_dim
 
         # build model
         self.layers = nn.ModuleList()
@@ -57,20 +55,14 @@ class BlockFCN(DiffEqModel):
         return dct
 
     def forward(self, input_dict):
-        """Stacks all input variables into a single tensor.
+        """Stacks all input variables into a single tensor and applies the
+        PyTorch model.
 
         Parameters
         ----------
         input_dict : ordered dict
             The dictionary of variables that is handed to the model
             (e.g. by a dataloader).
-        track_gradients : bool or list of str or list of DiffVariables
-            Whether the gradients w.r.t. the inputs should be tracked.
-            Tracking can be necessary for training of a PDE.
-            If True, all gradients will be tracked.
-            If a list of strings or variables is passed, gradient is tracked
-            only for the variables in the list.
-            If False, no gradients will be tracked.
 
         Returns
         -------
@@ -82,7 +74,7 @@ class BlockFCN(DiffEqModel):
         # apply model
         for layer in self.layers:
             x = layer(x)
-        return x
+        return self._prepare_outputs(x)
 
 
 class SimpleFCN(DiffEqModel):
@@ -100,13 +92,12 @@ class SimpleFCN(DiffEqModel):
         amount of output neurons
     """
 
-    def __init__(self, input_dim, depth=3, width=20, output_dim=1):
-        super().__init__()
+    def __init__(self, variable_dims, solution_dims, depth=3, width=20):
+        super().__init__(variable_dims=variable_dims,
+                         solution_dims=solution_dims)
 
-        self.input_dim = input_dim
         self.depth = depth
         self.width = width
-        self.output_dim = output_dim
 
         # build model
         self.layers = nn.ModuleList()
@@ -133,20 +124,14 @@ class SimpleFCN(DiffEqModel):
         return dct
 
     def forward(self, input_dict):
-        """Stacks all input variables into a single tensor.
+        """Stacks all input variables into a single tensor and applies
+        the PyTorch model
 
         Parameters
         ----------
         input_dict : ordered dict
             The dictionary of variables that is handed to the model
             (e.g. by a dataloader).
-        track_gradients : bool or list of str or list of DiffVariables
-            Whether the gradients w.r.t. the inputs should be tracked.
-            Tracking can be necessary for training of a PDE.
-            If True, all gradients will be tracked.
-            If a list of strings or variables is passed, gradient is tracked
-            only for the variables in the list.
-            If False, no gradients will be tracked.
 
         Returns
         -------
@@ -158,4 +143,4 @@ class SimpleFCN(DiffEqModel):
         # apply model
         for layer in self.layers:
             x = layer(x)
-        return x
+        return self._prepare_outputs(x)
