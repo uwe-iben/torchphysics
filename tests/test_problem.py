@@ -1,9 +1,11 @@
 import pytest
-from neural_diff_eq.problem import Variable
-from neural_diff_eq.problem import problem
-from neural_diff_eq.problem.condition import BoundaryCondition, Condition
-from neural_diff_eq.setting import Setting
-from neural_diff_eq.problem.domain.domain import Domain
+import torch
+import numpy
+from torchphysics.problem import Variable, Parameter
+from torchphysics.problem import problem
+from torchphysics.problem.condition import BoundaryCondition, Condition
+from torchphysics.setting import Setting
+from torchphysics.problem.domain.domain import Domain
 
 
 # Test Problem
@@ -34,7 +36,7 @@ def test_create_variable():
     vari = Variable(name='test', domain=None)
     assert vari.name == 'test'
     assert vari.domain is None
-    assert vari.context is None
+    assert vari.setting is None
     assert vari.train_conditions == {}
     assert vari.val_conditions == {}
     assert vari.order == 0
@@ -171,6 +173,59 @@ def test_serialize_variable():
     assert dct['val_conditions']['test cond'] == condi.serialize()
 
 
+# Test Parameter
+def test_parameter_creation_with_tensor():
+    inital = torch.tensor(2.0)
+    P = Parameter(inital, 'test')
+    assert P._name == 'test'
+    assert P.item() == 2
+    assert P.requires_grad
+
+
+def test_parameter_creation_with_numpy():
+    inital = numpy.array([2.0, 0])
+    P = Parameter(inital, 'test2')
+    assert P._name == 'test2'
+    assert P[0].item() == 2
+    assert P[1].item() == 0
+    assert P.requires_grad
+
+
+def test_parameter_creation_with_list():
+    inital = [1.0, 1.0]
+    P = Parameter(inital, 'test3')
+    assert P._name == 'test3'
+    assert P[0].item() == 1
+    assert P[1].item() == 1
+    assert P.requires_grad
+
+
+def test_parameter_creation_with_number():
+    inital = 1.0
+    P = Parameter(inital, 'test4')
+    assert P._name == 'test4'
+    assert P.item() == 1
+    assert P.requires_grad
+    inital = 6
+    P = Parameter(inital, 'test5')
+    assert P._name == 'test5'
+    assert P.item() == 6
+    assert P.requires_grad
+
+
+def test_parameter_creation_with_normal_distri():
+    inital = 'normal'
+    P = Parameter(inital, 'test6')
+    assert P.get_name() == 'test6'
+    assert P.requires_grad
+
+
+def test_parameter_creation_with_wrong_type():
+    inital = None
+    with pytest.raises(ValueError):
+        _ = Parameter(inital, 'Error')
+
+
 # Test Setting
 def test_empty_init():
     x = Variable(name='x',
@@ -181,8 +236,8 @@ def test_empty_init():
     x.add_train_condition(c)
     setup = Setting()
     setup.add_variable(x)
-    assert setup.variables['x'].context == {'x': x}
-    assert c.variables == {'x': x}
+    assert setup.variables['x'].setting.variables == {'x': x}
+    assert c.setting.variables == {'x': x}
 
     d = BoundaryCondition(name='d',
                           norm=None,
@@ -191,12 +246,12 @@ def test_empty_init():
                  domain=None,
                  train_conditions=d)
     setup.add_variable(y)
-    assert x.context == {'x': x, 'y': y}
-    assert y.context == {'x': x, 'y': y}
-    assert c.variables == {'x': x, 'y': y}
+    assert x.setting.variables == {'x': x, 'y': y}
+    assert y.setting.variables == {'x': x, 'y': y}
+    assert c.setting.variables == {'x': x, 'y': y}
     assert c.boundary_variable == x.name
     assert d.boundary_variable == y.name
-    assert d.variables == {'x': x, 'y': y}
+    assert d.setting.variables == {'x': x, 'y': y}
     # test correct output of get_conditions
     assert setup.get_train_conditions() == {'x_c': c, 'y_d': d}
 
@@ -220,11 +275,11 @@ def test_full_init():
                   track_gradients=False)
     setup = Setting((x, y), val_conditions=e)
 
-    assert setup.variables['x'].context == {'x': x, 'y': y}
+    assert setup.variables['x'].setting.variables == {'x': x, 'y': y}
     assert setup.get_val_conditions() == {'e': e, 'x_c': c, 'y_d': d}
-    assert c.variables == {'x': x, 'y': y}
-    assert d.variables == {'x': x, 'y': y}
-    assert e.variables == {'x': x, 'y': y}
+    assert c.setting.variables == {'x': x, 'y': y}
+    assert d.setting.variables == {'x': x, 'y': y}
+    assert e.setting.variables == {'x': x, 'y': y}
 
     f = BoundaryCondition(name='f',
                           norm=None,
@@ -232,7 +287,7 @@ def test_full_init():
 
     setup.add_val_condition(f, boundary_var='x')
 
-    assert f.variables == {'x': x, 'y': y}
+    assert f.setting.variables == {'x': x, 'y': y}
     assert setup.get_val_conditions() == {'e': e, 'x_c': c, 'y_d': d, 'x_f': f}
-    assert d.variables == {'x': x, 'y': y}
-    assert y.context == {'x': x, 'y': y}
+    assert d.setting.variables == {'x': x, 'y': y}
+    assert y.setting.variables == {'x': x, 'y': y}

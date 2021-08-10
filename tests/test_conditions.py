@@ -1,41 +1,47 @@
 import torch
 import numpy as np
 import pytest
-from neural_diff_eq.problem import condition as condi
-from neural_diff_eq.problem import datacreator as dc
-from neural_diff_eq.problem.domain.domain1D import Interval
-from neural_diff_eq.problem.domain.domain2D import Rectangle
-from neural_diff_eq.problem.variables.variable import Variable
+from torchphysics.problem import condition as condi
+from torchphysics.problem import datacreator as dc
+from torchphysics.problem.domain.domain1D import Interval
+from torchphysics.problem.domain.domain2D import Rectangle
+from torchphysics.setting import Setting
+from torchphysics.problem.variables.variable import Variable
 
 # Helper functions for testing
+
+
 def model_function(input):
-    return input['x']
-
-def condition_function(model, data):
-    return model - data['out']
+    return {'u': input['x']}
 
 
-# Test parent class
+def condition_function(u, data):
+    return u - data
+
+
+# Test parent class 
 def test_create_condition():
-    cond = condi.Condition(name='test', norm=torch.nn.MSELoss(), weight=2, 
+    cond = condi.Condition(name='test', norm=torch.nn.MSELoss(), weight=2,
                            track_gradients=True, data_plot_variables=True)
     assert cond.name == 'test'
     assert isinstance(cond.norm, torch.nn.MSELoss)
     assert cond.weight == 2
     assert cond.track_gradients
     assert cond.data_plot_variables
-    assert cond.variables is None
+    assert cond.setting is None
 
 
 def test_none_methode_condition():
     cond = condi.Condition(name='test', norm=torch.nn.MSELoss())
     assert cond.get_data() is None
-    assert cond.get_data_plot_variables() is None    
+    assert cond.get_data_plot_variables() is None
+
 
 def test_none_methode_datacreator():
     creator = dc.DataCreator(None, 1)
     assert creator.get_data() is None
-    assert creator.divide_dataset_for_int() is None 
+    assert creator.divide_dataset_for_int() is None
+
 
 def test_new_condition_not_registered():
     cond = condi.Condition(name='test', norm=torch.nn.MSELoss())
@@ -50,6 +56,47 @@ def test_serialize_condition():
     assert dct['weight'] == 1
 
 
+def test_remove_nan_from_data():
+    out = np.array([[np.NaN], [2]])
+    batch_size = 2
+    input_dic = {'x': np.array([[0], [2]]),
+                 't': np.array([[1], [3]])}
+    input_dic, out = condi.remove_nan(input_dic, out, batch_size)
+    assert len(out) == 1
+    assert out[0] == [2]
+    assert input_dic['x'] == [2]
+    assert input_dic['t'] == [3]
+
+
+def test_remove_nan_from_data_only_for_arrays():
+    out = np.array([[np.NaN], [2]])
+    batch_size = 2
+    input_dic = {'x': [[0], [2]],
+                 't': [[1], [3]]}
+    input_dic, out = condi.remove_nan(input_dic, out, batch_size)
+    assert len(out) == 1
+    assert out[0] == [2]
+    assert np.allclose(input_dic['x'], [[0], [2]])
+    assert np.allclose(input_dic['t'], [[1], [3]])
+
+
+def test_get_data_len_with_int():
+    assert condi.get_data_len(3) == 3
+
+
+def test_get_data_len_with_list():
+    assert condi.get_data_len([3, 4, 5]) == 60
+
+
+def test_get_data_len_with_dic():
+    assert condi.get_data_len({'x': 4, 't': 3}) == 12    
+
+
+def test_get_data_len_error_for_wrong_type():
+    with pytest.raises(ValueError):
+        _ = condi.get_data_len('hello')
+
+
 # Test DiffEqCondition
 def test_create_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
@@ -59,34 +106,40 @@ def test_create_diffeqcondition():
     assert cond.weight == 1
     assert cond.track_gradients
     assert not cond.data_plot_variables
-    assert cond.variables is None
+    assert cond.setting is None
     assert cond.datacreator.dataset_size == 10000
     assert cond.pde == condition_function
 
 
 def test_forward_diffeqcondition_with_MSE():
-    data = {'x': torch.FloatTensor([[1, 1], [1, 0]]), 
-            'out': torch.FloatTensor([[1, 1], [1, 0]])}
+    inp = {'x': torch.FloatTensor([[1, 1], [1, 0]]),
+           'data': torch.FloatTensor([[1, 1], [1, 0]])}
     cond = condi.DiffEqCondition(pde=condition_function,
                                  norm=torch.nn.MSELoss())
-    out = cond.forward(model_function, data)
-    assert out == 0  
-    data = {'x': torch.FloatTensor([[1, 1], [1, 0]]), 
-            'out': torch.FloatTensor([[0, 1], [1, 0]])}
-    out = cond.forward(model_function, data)
-    assert out == 1/4  
+    x = Variable(name='x', domain=None)
+    setting = Setting(variables={'x': x})
+    cond.setting = setting
+    out = cond.forward(model_function, inp)
+    assert out == 0
+    inp = {'x': torch.FloatTensor([[1, 1], [1, 0]]),
+           'data': torch.FloatTensor([[0, 1], [1, 0]])}
+    out = cond.forward(model_function, inp)
+    assert out == 1/4
 
 
 def test_forward_diffeqcondition_with_L1Loss():
-    data = {'x': torch.FloatTensor([[1, 1], [1, 0]]), 
-            'out': torch.FloatTensor([[1, 1], [1, 0]])}
+    inp = {'x': torch.FloatTensor([[1, 1], [1, 0]]),
+           'data': torch.FloatTensor([[1, 1], [1, 0]])}
     cond = condi.DiffEqCondition(pde=condition_function,
                                  norm=torch.nn.L1Loss(reduction='sum'))
-    out = cond.forward(model_function, data)
-    assert out == 0  
-    data = {'x': torch.FloatTensor([[1, 1], [1, 0]]), 
-            'out': torch.FloatTensor([[0, 1], [1, 0]])}
-    out = cond.forward(model_function, data)
+    x = Variable(name='x', domain=None)
+    setting = Setting(variables={'x': x})
+    cond.setting = setting
+    out = cond.forward(model_function, inp)
+    assert out == 0
+    inp = {'x': torch.FloatTensor([[1, 1], [1, 0]]),
+           'data': torch.FloatTensor([[0, 1], [1, 0]])}
+    out = cond.forward(model_function, inp)
     assert out == 1
 
 
@@ -99,21 +152,23 @@ def test_get_data_diffeqcondition_not_registered():
 
 def test_get_data_diffeqcondition_wrong_strategy():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
+                                 norm=torch.nn.MSELoss(),
                                  sampling_strategy='test')
-    cond.variables = {}
+    setting = Setting(variables={})
+    cond.setting = setting
     with pytest.raises(NotImplementedError):
         cond.get_data()
 
 
-def test_data_sampling_with_int_random_diffeqcondition(): 
+def test_data_sampling_with_int_random_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size=500, 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=500,
                                  sampling_strategy='random')
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     data = cond.get_data()
     assert np.shape(data['x']) == (500, 1)
     assert np.shape(data['t']) == (500, 1)
@@ -121,60 +176,65 @@ def test_data_sampling_with_int_random_diffeqcondition():
     assert not x.domain.is_inside(data['t']).all()
 
 
-def test_data_sampling_with_int_grid_diffeqcondition(): 
+def test_data_sampling_with_int_grid_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size=100, 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=100,
                                  sampling_strategy='grid')
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     data = cond.get_data()
     assert np.shape(data['x']) == (100, 1)
     assert np.shape(data['t']) == (100, 1)
     for i in range(9):
-        assert data['x'][i] == data['x'][i+1]     
+        assert data['x'][i] == data['x'][i+1]
     assert np.equal(data['t'][0:10], data['t'][10:20]).all()
 
 
-def test_data_sampling_with_int_grid_divide_2D_1D_diffeqcondition(): 
+def test_data_sampling_with_int_grid_divide_2D_1D_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size=1000, 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=1000,
                                  sampling_strategy='grid')
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     data = cond.get_data()
     assert np.shape(data['x']) == (1000, 2)
     assert np.shape(data['t']) == (1000, 1)
     for i in range(9):
-        assert np.equal(data['x'][i], data['x'][i+1]).all()  
-        assert np.equal(data['x'][100+i], data['x'][i+101]).all()  
+        assert np.equal(data['x'][i], data['x'][i+1]).all()
+        assert np.equal(data['x'][100+i], data['x'][i+101]).all()
     assert np.equal(data['t'][0:100], data['t'][100:200]).all()
 
 
-def test_data_sampling_with_wrong_input_diffeqcondition(): 
+def test_data_sampling_with_wrong_input_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size='42', 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=42,
                                  sampling_strategy='grid')
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.datacreator.dataset_size = '42'
+    cond.setting = setting
     with pytest.raises(TypeError):
         _ = cond.get_data()
 
 
-def test_data_sampling_with_list_diffeqcondition(): 
+def test_data_sampling_with_list_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size=[10, 10, 5], 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=[10, 10, 5],
                                  sampling_strategy='random')
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, 1))
     D = Variable(name='D', domain=Interval(2, 3))
-    cond.variables = {'x': x, 't': t, 'D': D}
+    setting = Setting(variables={'x': x, 't': t, 'D': D})
+    cond.setting = setting
     data = cond.get_data()
     assert np.shape(data['x']) == (500, 1)
     assert np.shape(data['t']) == (500, 1)
@@ -186,14 +246,15 @@ def test_data_sampling_with_list_diffeqcondition():
     assert not D.domain.is_inside(data['t']).all()
 
 
-def test_data_sampling_with_dic_diffeqcondition(): 
+def test_data_sampling_with_dic_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size={'t': 5, 'x': 10}, 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size={'x': 5, 't': 10},
                                  sampling_strategy='grid')
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     data = cond.get_data()
     assert np.shape(data['x']) == (50, 2)
     assert np.shape(data['t']) == (50, 1)
@@ -201,10 +262,32 @@ def test_data_sampling_with_dic_diffeqcondition():
     assert x.domain.is_inside(data['x']).all()
 
 
+def test_data_sampling_with_data_fun_diffeqcondition():
+    def fun(x):
+        return x
+    cond = condi.DiffEqCondition(pde=condition_function,
+                                 data_fun=fun,
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=500,
+                                 sampling_strategy='random', 
+                                 data_fun_whole_batch=False)
+    x = Variable(name='x', domain=Interval(0, 1))
+    t = Variable(name='t', domain=Interval(-1, 1))
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
+    data = cond.get_data()
+    assert np.shape(data['x']) == (500, 1)
+    assert np.shape(data['t']) == (500, 1)
+    assert np.shape(data['data']) == (500, 1)
+    assert np.equal(data['data'], data['x']).all()
+    assert t.domain.is_inside(data['t']).all()
+    assert not x.domain.is_inside(data['t']).all()
+
+
 def test_serialize_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size=500, 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=500,
                                  sampling_strategy='grid')
     dct = cond.serialize()
     assert dct['sampling_strategy'] == 'grid'
@@ -214,12 +297,13 @@ def test_serialize_diffeqcondition():
 
 def test_get_data_plot_varibales_diffeqcondition():
     cond = condi.DiffEqCondition(pde=condition_function,
-                                 norm=torch.nn.MSELoss(), 
-                                 dataset_size=500, 
+                                 norm=torch.nn.MSELoss(),
+                                 dataset_size=500,
                                  sampling_strategy='grid')
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     assert cond.get_data_plot_variables() is None
     cond.data_plot_variables = True
     assert cond.get_data_plot_variables() == {'x': x, 't': t}
@@ -230,9 +314,11 @@ def test_get_data_plot_varibales_diffeqcondition():
 # Test datacondition
 def create_data_condition():
     return condi.DataCondition(name='test',
-                               norm=torch.nn.MSELoss(), 
-                               data_x={'x': torch.ones(5)}, 
-                               data_u=torch.tensor([1, 2, 1, 1, 0]))
+                               norm=torch.nn.MSELoss(),
+                               data_inp={'x': torch.ones(5)},
+                               data_out=torch.tensor([1, 2, 1, 1, 0]))
+
+
 def test_create_datacondition():
     cond = create_data_condition()
     assert cond.name == 'test'
@@ -240,7 +326,7 @@ def test_create_datacondition():
     assert cond.weight == 1
     assert not cond.track_gradients
     assert not cond.data_plot_variables
-    assert cond.variables is None
+    assert cond.setting is None
     assert torch.equal(cond.data_x['x'], torch.ones(5))
     assert torch.equal(cond.data_u, torch.tensor([1, 2, 1, 1, 0]))
 
@@ -268,30 +354,33 @@ def test_get_data_datacondition():
     cond = create_data_condition()
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, 1))
-    cond.variables = {'x': x, 't': t}
-    data, target = cond.get_data()
-    assert torch.equal(data['x'], torch.ones(5))
-    assert torch.equal(target, torch.tensor([1, 2, 1, 1, 0]))
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
+    inp = cond.get_data()
+    assert torch.equal(inp['x'], torch.ones(5))
+    assert torch.equal(inp['target'], torch.tensor([1, 2, 1, 1, 0]))
 
 
-def test_forward_dataqcondition():
+def test_forward_datacondition():
     cond = create_data_condition()
-    cond.variables = {'x': 1}
+    x = Variable(name='x', domain=None)
+    setting = Setting(variables={'x': x})
+    cond.setting = setting
     data = cond.get_data()
     out = cond.forward(model_function, data)
-    assert out == 2/5  
+    assert out == 2/5
 
 
 # Test boundary conditions
 def test_parent_boundary_condition():
-    cond = condi.BoundaryCondition(name='test', 
+    cond = condi.BoundaryCondition(name='test',
                                    norm=torch.nn.MSELoss(),
                                    track_gradients=True)
     assert cond.boundary_variable is None
 
 
 def test_serialize_boundary_condition():
-    cond = condi.BoundaryCondition(name='test', 
+    cond = condi.BoundaryCondition(name='test',
                                    norm=torch.nn.MSELoss(),
                                    track_gradients=True)
     dct = cond.serialize()
@@ -299,7 +388,7 @@ def test_serialize_boundary_condition():
 
 
 def test_get_data_plot_varibales_boundary_conditon():
-    cond = condi.BoundaryCondition(name='test', 
+    cond = condi.BoundaryCondition(name='test',
                                    norm=torch.nn.MSELoss(),
                                    track_gradients=True)
     x = Variable(name='x', domain=Interval(0, 1))
@@ -315,8 +404,9 @@ def test_get_data_plot_varibales_boundary_conditon():
 
 
 # Test dirichlet condition
-def dirichlet_fun(input):
+def dirichlet_fun(**input):
     return input['x']
+
 
 def create_dirichlet():
     return condi.DirichletCondition(dirichlet_fun=dirichlet_fun,
@@ -339,7 +429,7 @@ def test_create_dirichlet_condition():
     assert cond.boundary_variable is None
     assert cond.weight == 1.5
     assert cond.datacreator.dataset_size == 50
-    assert cond.data_plot_variables 
+    assert cond.data_plot_variables
 
 
 def test_serialize_dirichlet_condition():
@@ -351,7 +441,7 @@ def test_serialize_dirichlet_condition():
     assert dct['boundary_sampling_strategy'] == 'random'
 
 
-def test_get_data_dirichlet_qcondition_not_registered():
+def test_get_data_dirichlet_condition_not_registered():
     cond = create_dirichlet()
     with pytest.raises(RuntimeError):
         cond.get_data()
@@ -361,31 +451,35 @@ def test_get_data_dirichlet_condition():
     cond = create_dirichlet()
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-3, -2))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     cond.boundary_variable = 't'
-    data, target = cond.get_data()
+    data  = cond.get_data()
     assert np.shape(data['x']) == (64, 1)
     assert np.shape(data['t']) == (64, 1)
     assert t.domain.is_inside(data['t']).all()
     assert not x.domain.is_inside(data['t']).all()
-    assert np.equal(data['x'], target).all()
+    assert np.equal(data['x'], data['target']).all()
 
 
 def test_forward_dirichlet_condition():
+    x = Variable(name='x', domain=Interval(0, 1))
+    setting = Setting(variables={'x': x})
     cond = create_dirichlet()
-    data = ({'x': torch.ones((2,1))}, torch.zeros((2,1)))
+    cond.setting = setting
+    data = ({'x': torch.ones((2, 1)), 'target': torch.zeros((2, 1))})
     out = cond.forward(model_function, data)
-    assert out.item() == 1 
+    assert out.item() == 1
     assert isinstance(out, torch.Tensor)
 
 
 def test_boundary_data_meshing():
     input_dic = {'x': np.array([[1], [2]]), 't': np.array([[1, 1], [3, 0]])}
     data_points = np.array([[0], [1]])
-    creator = dc.BoundaryDataCreator(variables= {'x': 1, 't': 1, 'r':1}, 
-                                     dataset_size=10, 
+    creator = dc.BoundaryDataCreator(variables={'x': 1, 't': 1, 'r': 1},
+                                     dataset_size=10,
                                      sampling_strategy='random',
-                                     boundary_sampling_strategy='random')  
+                                     boundary_sampling_strategy='random')
     creator.boundary_variable = 'r'
     mesh_data = creator.mesh_inner_and_boundary_data(input_dic, data_points)
     solution = np.array([[1, 1, 1, 0], [2, 3, 0, 0], [1, 1, 1, 1], [2, 3, 0, 1]])
@@ -397,8 +491,8 @@ def test_boundary_data_meshing():
 def test_boundary_data_creation_random_random_int():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-3, -2))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=10, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=10,
                                      sampling_strategy='random',
                                      boundary_sampling_strategy='random')
     creator.boundary_variable = 't'
@@ -413,8 +507,8 @@ def test_boundary_data_creation_random_random_int():
 def test_boundary_data_creation_grid_random_int():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-3, -2))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=25, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=25,
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='random')
     creator.boundary_variable = 't'
@@ -431,8 +525,8 @@ def test_boundary_data_creation_grid_random_int():
 def test_boundary_data_creation_random_grid_int():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=25, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=25,
                                      sampling_strategy='random',
                                      boundary_sampling_strategy='grid')
     creator.boundary_variable = 't'
@@ -449,8 +543,8 @@ def test_boundary_data_creation_random_grid_int():
 def test_boundary_data_creation_grid_grid_int():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=30, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=30,
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='grid')
     creator.boundary_variable = 't'
@@ -467,8 +561,8 @@ def test_boundary_data_creation_grid_grid_int():
 def test_boundary_data_creation_random_lower_bound_int():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=30, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=30,
                                      sampling_strategy='random',
                                      boundary_sampling_strategy='lower_bound_only')
     creator.boundary_variable = 't'
@@ -478,15 +572,15 @@ def test_boundary_data_creation_random_lower_bound_int():
     assert x.domain.is_inside(data['x']).all()
     assert t.domain.is_inside(data['t']).all()
     for i in range(len(data['t'])):
-        assert data['t'][i] == -1 
+        assert data['t'][i] == -1
     assert not x.domain.is_inside(data['t']).all()
 
 
 def test_boundary_data_creation_grid_lower_upper_bound_int():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=30, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=30,
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='lower_bound_only')
     creator.boundary_variable = 't'
@@ -496,7 +590,7 @@ def test_boundary_data_creation_grid_lower_upper_bound_int():
     assert x.domain.is_inside(data['x']).all()
     assert t.domain.is_inside(data['t']).all()
     for i in range(len(data['t'])):
-        assert data['t'][i] == -1 
+        assert data['t'][i] == -1
     assert not x.domain.is_inside(data['t']).all()
     creator.boundary_sampling_strategy = 'upper_bound_only'
     data = creator.get_data()
@@ -508,11 +602,12 @@ def test_boundary_data_creation_grid_lower_upper_bound_int():
         assert data['t'][i] == -0.1
     assert not x.domain.is_inside(data['t']).all()
 
+
 def test_boundary_data_creation_with_list():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=[30, 2], 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=[30, 2],
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='grid')
     creator.boundary_variable = 't'
@@ -529,8 +624,8 @@ def test_boundary_data_creation_with_list():
 def test_boundary_data_creation_with_dic():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size={'x':10, 't':1}, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size={'x': 10, 't': 1},
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='lower_bound_only')
     creator.boundary_variable = 't'
@@ -548,8 +643,8 @@ def test_boundary_data_creation_with_3_inputs():
     x = Variable(name='x', domain=Interval(0, 1))
     t = Variable(name='t', domain=Interval(-1, -0.1))
     D = Variable(name='D', domain=Interval(3, 4))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t, 'D': D}, 
-                                     dataset_size=[10, 1, 10], 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t, 'D': D},
+                                     dataset_size=[10, 1, 10],
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='lower_bound_only')
     creator.boundary_variable = 'x'
@@ -570,8 +665,8 @@ def test_boundary_data_creation_with_2D_boundary_grid_grid():
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, -0.1))
     D = Variable(name='D', domain=Interval(3, 4))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t, 'D': D}, 
-                                     dataset_size=[10, 10, 10], 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t, 'D': D},
+                                     dataset_size=[10, 10, 10],
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='grid')
     creator.boundary_variable = 'x'
@@ -588,8 +683,8 @@ def test_boundary_data_creation_with_2D_boundary_grid_grid():
 def test_boundary_data_creation_with_2D_boundary_grid_grid_int():
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=1000, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=1000,
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='grid')
     creator.boundary_variable = 'x'
@@ -606,8 +701,8 @@ def test_boundary_data_creation_with_2D_boundary_grid_grid_int():
 def test_boundary_data_creation_with_2D_boundary_random_grid_int():
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=100, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=100,
                                      sampling_strategy='random',
                                      boundary_sampling_strategy='grid')
     creator.boundary_variable = 'x'
@@ -621,8 +716,8 @@ def test_boundary_data_creation_with_2D_boundary_random_grid_int():
 def test_boundary_data_creation_with_2D_boundary_grid_random_int():
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-1, -0.1))
-    creator = dc.BoundaryDataCreator(variables= {'x': x, 't': t}, 
-                                     dataset_size=100, 
+    creator = dc.BoundaryDataCreator(variables={'x': x, 't': t},
+                                     dataset_size=100,
                                      sampling_strategy='grid',
                                      boundary_sampling_strategy='random')
     creator.boundary_variable = 'x'
@@ -634,8 +729,9 @@ def test_boundary_data_creation_with_2D_boundary_grid_random_int():
 
 
 # Test neumann conditions
-def neumann_fun(input):
+def neumann_fun(**input):
     return np.zeros_like(input['t'])
+
 
 def create_neumann():
     return condi.NeumannCondition(neumann_fun=neumann_fun,
@@ -658,7 +754,7 @@ def test_create_neumann_condition():
     assert cond.boundary_variable is None
     assert cond.weight == 1
     assert cond.datacreator.dataset_size == 50
-    assert cond.data_plot_variables 
+    assert cond.data_plot_variables
 
 
 def test_serialize_neumann_condition():
@@ -680,37 +776,138 @@ def test_get_data_neumann_condition():
     cond = create_neumann()
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-3, -2))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     cond.boundary_variable = 'x'
-    data, target, normals = cond.get_data()
-    assert np.shape(data['x']) == (64, 2)
-    assert np.shape(data['t']) == (64, 1)
-    assert np.shape(normals) == (64, 2)
-    assert np.shape(target) == (64, 1)
-    assert t.domain.is_inside(data['t']).all()
-    assert x.domain.is_on_boundary(data['x']).all()
-    for i in range(len(normals)):
-        assert np.isclose(np.linalg.norm(normals[i]), 1)
-        assert np.isclose(target[i], 0)
-    for i in range(len(normals)):
-        new_normal = x.domain.boundary_normal([data['x'][i]])
-        assert np.allclose(new_normal, normals[i])
+    inp = cond.get_data()
+    assert np.shape(inp['x']) == (64, 2)
+    assert np.shape(inp['t']) == (64, 1)
+    assert np.shape(inp['normal']) == (64, 2)
+    assert np.shape(inp['target']) == (64, 1)
+    assert t.domain.is_inside(inp['t']).all()
+    assert x.domain.is_on_boundary(inp['x']).all()
+    for i in range(len(inp['normal'])):
+        assert np.isclose(np.linalg.norm(inp['normal'][i]), 1)
+        assert np.isclose(inp['target'][i], 0)
+    for i in range(len(inp['normal'])):
+        new_normal = x.domain.boundary_normal([inp['x'][i]])
+        assert np.allclose(new_normal, inp['normal'][i])
 
 
 def test_forward_neumann_condition():
     cond = create_neumann()
     x = Variable(name='x', domain=Rectangle([0, 0], [1, 0], [0, 1]))
     t = Variable(name='t', domain=Interval(-3, -2))
-    cond.variables = {'x': x, 't': t}
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
     cond.boundary_variable = 'x'
-    data, target, normals = cond.get_data()
-    target = torch.from_numpy(target)
-    normals = torch.from_numpy(normals)
-    data['x'] = torch.from_numpy(data['x'])
-    data['x'].requires_grad = True 
-    data = data, target, normals
+    inp = cond.get_data()
+    target = torch.from_numpy(inp['target'])
+    normals = torch.from_numpy(inp['normal'])
+    inp['x'] = torch.from_numpy(inp['x'])
+    inp['x'].requires_grad = True
+    data = {**inp, 'target': target, 'normal': normals}
     out = cond.forward(model_function, data)
-    assert out.item() == 1 
+    assert out.item() == 1
     assert isinstance(out, torch.Tensor)
     norm = torch.nn.MSELoss()
     assert torch.isclose(out, norm(normals.sum(dim=1, keepdim=True), target))
+
+
+# Test DiffEqBoundaryCondition for arbitrary boundary conditions
+def create_arbitrary():
+    return condi.DiffEqBoundaryCondition(bound_condition_fun=dirichlet_fun,
+                                         name='test arbitrary',
+                                         norm=torch.nn.MSELoss(),
+                                         sampling_strategy='random',
+                                         boundary_sampling_strategy='lower_bound_only',
+                                         dataset_size=5)
+
+
+def test_create_diffEqBoundary_condition():
+    cond = create_arbitrary()
+    assert cond.bound_condition_fun == dirichlet_fun
+    assert cond.name == 'test arbitrary'
+    assert isinstance(cond.norm, torch.nn.MSELoss)
+    assert cond.datacreator.sampling_strategy == 'random'
+    assert cond.datacreator.boundary_sampling_strategy == 'lower_bound_only'
+    assert cond.boundary_variable is None
+    assert cond.weight == 1
+    assert cond.datacreator.dataset_size == 5
+    assert cond.data_plot_variables
+    assert cond.data_fun is None
+
+
+def test_serialize_diffEqBoundary_condition():
+    cond = create_arbitrary()
+    dct = cond.serialize()
+    assert dct['bound_condition_fun'] == 'dirichlet_fun'
+    assert dct['dataset_size'] == 5
+    assert dct['sampling_strategy'] == 'random'
+    assert dct['boundary_sampling_strategy'] == 'lower_bound_only'
+    cond.data_fun = neumann_fun
+    dct = cond.serialize()
+    assert dct['data_fun'] == 'neumann_fun'
+
+
+def test_get_data_diffEqBoundary_condition_not_registered():
+    cond = create_arbitrary()
+    with pytest.raises(RuntimeError):
+        cond.get_data()
+
+
+def test_get_data_diffEqBoundary_condition():
+    cond = create_arbitrary()
+    x = Variable(name='x', domain=Interval(0, 1))
+    t = Variable(name='t', domain=Interval(-3, -2))
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
+    cond.boundary_variable = 't'
+    inp = cond.get_data()
+    assert np.shape(inp['x']) == (5, 1)
+    assert np.shape(inp['t']) == (5, 1)
+    assert np.equal(inp['normal'], [[-1], [-1], [-1], [-1], [-1]]).all()
+    assert not x.domain.is_inside(inp['t']).all()
+
+
+def test_get_data_with_target_diffEqBoundary_condition():
+    cond = create_arbitrary()
+    x = Variable(name='x', domain=Interval(0, 1))
+    t = Variable(name='t', domain=Interval(-3, -2))
+    setting = Setting(variables={'x': x, 't': t})
+    cond.setting = setting
+    cond.boundary_variable = 't'
+    cond.data_fun = dirichlet_fun
+    inp = cond.get_data()
+    assert np.shape(inp['x']) == (5, 1)
+    assert np.shape(inp['data']) == (5, 1)
+    assert np.shape(inp['t']) == (5, 1)
+    assert np.equal(inp['normal'], [[-1], [-1], [-1], [-1], [-1]]).all()
+    assert not x.domain.is_inside(inp['t']).all()
+    assert np.equal(inp['x'], inp['data']).all()
+
+
+def test_forward_diffEqBoundary_condition_with_MSE():
+    def condition_function(u, data, normal):
+        return u - data
+    data = {'x': torch.FloatTensor([[1, 1], [1, 0]]),
+            'data': torch.FloatTensor([[1, 1], [1, 0]])}
+    normals = [[1, 0], [1, 0]]
+    data_comb = {**data, 'normal': normals}
+    cond = create_arbitrary()
+    x = Variable(name='x', domain=None)
+    setting = Setting(variables={'x': x})
+    cond.setting = setting
+    cond.bound_condition_fun = condition_function
+    out = cond.forward(model_function, data_comb)
+    assert out == 0
+    cond.data_fun = 2  # data_fun not None
+    target = torch.FloatTensor([[2, 0], [1, 0]])
+
+    def condition_function(u, data, normal):
+        return u - target
+
+    data_comb = {**data, 'data': target, 'normal': normals}
+    cond.bound_condition_fun = condition_function
+    out = cond.forward(model_function, data_comb)
+    assert out == 1/2

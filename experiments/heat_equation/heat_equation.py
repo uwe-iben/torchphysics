@@ -8,15 +8,15 @@ import torch
 import numpy as np
 import pytorch_lightning as pl
 
-from neural_diff_eq.problem import (Variable,
+from torchphysics.problem import (Variable,
                                     Setting)
-from neural_diff_eq.problem.domain import (Rectangle,
+from torchphysics.problem.domain import (Rectangle,
                                            Interval)
-from neural_diff_eq.problem.condition import (DirichletCondition,
+from torchphysics.problem.condition import (DirichletCondition,
                                               DiffEqCondition)
-from neural_diff_eq.models import SimpleFCN
-from neural_diff_eq import PINNModule
-from neural_diff_eq.utils import laplacian, gradient
+from torchphysics.models import SimpleFCN
+from torchphysics import PINNModule
+from torchphysics.utils import laplacian, grad
 
 import time
 
@@ -72,7 +72,7 @@ t.add_train_condition(DirichletCondition(dirichlet_fun=t_dirichlet_fun,
 
 
 def pde(u, input):
-    return gradient(u, input['t']) - D*laplacian(u, input['x'])
+    return grad(u, input['t']) - D*laplacian(u, input['x'])
 
 
 train_cond = DiffEqCondition(pde=pde,

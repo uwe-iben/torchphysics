@@ -1,9 +1,10 @@
 import pytest
 import numpy as np
 
-from neural_diff_eq.problem.domain.domain1D import Interval
-from neural_diff_eq.problem.domain.domain2D import (Rectangle, Circle, Triangle)
-from neural_diff_eq.problem.domain.domain_operations import (Cut, Union,
+from torchphysics.problem.domain.domain1D import Interval
+from torchphysics.problem.domain.domain2D import (Rectangle, Circle,
+                                                  Triangle, Polygon2D)
+from torchphysics.problem.domain.domain_operations import (Cut, Union,
                                                              Intersection,
                                                              Domain_operation)
 
@@ -19,6 +20,11 @@ def test_none_by_domain_operation():
     assert DO._approximate_volume(2) is None 
     assert DO._approximate_surface(2) is None 
 
+
+def test_outline_domain_operation_for_not_implemented():
+    DO = Domain_operation(dim=0, volume=0, surface=0, tol=0)
+    with pytest.raises(NotImplementedError):
+        _ = DO.construct_shapely(None)
 
 # Test Cut
 def test_cut():
@@ -199,8 +205,6 @@ def test_empty_cut():
     assert T.surface == cut.surface
 
 
-
-
 def test_normals_of_cut_1():
     R, C = _create_domains()
     cut = Cut(R, C)
@@ -253,6 +257,24 @@ def test_cut_many_times():
     i = C.sample_boundary(20)
     assert C.is_inside(b).all()
     assert C.is_on_boundary(i).all()
+
+
+def test_cut_bounds():
+    R, C = _create_domains()
+    C = Cut(R, C)
+    bounds = C._compute_bounds()
+    assert np.allclose(bounds, [0, 1, 0, 1])
+
+
+def test_outline_cut():
+    R = Rectangle([0, 0], [2, 0], [0, 2])
+    R2 = Rectangle([0.5, 0.5], [1, 0.5], [0.5, 1])
+    C = Cut(R, R2)
+    outline = C.outline()
+    assert isinstance(outline, list)
+    assert np.allclose(outline[0], [[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]])
+    assert np.allclose(outline[1], [[0.5, 0.5], [1, 0.5], [1, 1],
+                                    [0.5, 1], [0.5, 0.5]])
 
 
 def test_serialize_cut():
@@ -442,6 +464,20 @@ def test_unite_many_times():
     assert U.is_on_boundary(i).all()
 
 
+def test_outline_union():
+    R = Rectangle([0, 0], [2, 0], [0, 2])
+    R2 = Rectangle([0.5, 0.5], [1, 0.5], [0.5, 1])
+    C = Cut(R, R2)
+    T = Triangle([0, 2], [1, 2], [0, 3])
+    U = Union(C, T)
+    outline = U.outline()
+    assert isinstance(outline, list)
+    assert np.allclose(outline[0], [[0, 0], [0, 2], [0, 3],
+                                    [1, 2], [2, 2], [2, 0], [0, 0]])
+    assert np.allclose(outline[1], [[0.5, 0.5], [1, 0.5], [1, 1],
+                                    [0.5, 1], [0.5, 0.5]])
+
+
 def _create_intervals():
     I1 = Interval(0, 1)
     I2 = Interval(2, 4)
@@ -499,6 +535,13 @@ def test_serialize_union():
     assert dct['dim'] == 2
     assert dct['tol'] == 1e-06
     assert dct['name'] == '((Rectangle + Circle) - Circle)'
+
+
+def test_union_bounds():
+    R, C = _create_domains()
+    U = Union(R, C)
+    bounds = U._compute_bounds()
+    assert np.allclose(bounds, [-0.5, 1, -0.5, 1])
 
 
 # Test intersection
@@ -635,3 +678,31 @@ def test_serialize_intersection():
     assert dct['dim'] == 2
     assert dct['tol'] == 1e-06
     assert dct['name'] == '(Rectangle intersect Circle)'
+
+
+def test_grid_for_plots_intersection():
+    R, C = _create_domains()
+    U = Intersection(R, C)
+    points = U.grid_for_plots(200)
+    inside = U.is_inside(points)
+    on_bound = U.is_on_boundary(points)
+    assert np.logical_or(inside, on_bound).all()  
+
+
+def test_intersection_bounds():
+    R, C = _create_domains()
+    I = Intersection(R, C)
+    bounds = I._compute_bounds()
+    assert np.allclose(bounds, [0, 0.5, 0, 0.5])
+
+
+def test_outline_intersection():
+    R = Polygon2D(corners=[[0, 0], [2, 0], [2, 2], [0, 2]])
+    R2 = Rectangle([0.5, 0.5], [0.7, 0.5], [0.5, 0.7])
+    C = Cut(R, R2)
+    Ci = Circle([0, 0], 2)
+    I = Intersection(C, Ci)
+    outline = I.outline()
+    assert isinstance(outline, list)
+    assert np.allclose(outline[1], [[0.5, 0.5], [0.7, 0.5], [0.7, 0.7],
+                                    [0.5, 0.7], [0.5, 0.5]])
