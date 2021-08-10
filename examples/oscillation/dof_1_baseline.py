@@ -25,7 +25,7 @@ from torchphysics.utils import laplacian, grad
 from torchphysics.utils.plot import _plot
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0" # select GPUs to use
+os.environ["CUDA_VISIBLE_DEVICES"] = "2" # select GPUs to use
 
 #pl.seed_everything(43) # set a global seed
 torch.cuda.is_available()
@@ -33,9 +33,9 @@ torch.cuda.is_available()
 
 stiffness = 1e4
 damping = 4
-mass = 1
+mass = 5e2
 SampleFrequency = 1024
-t_end = 5
+t_end = 1
 t = np.linspace(0, t_end, t_end * SampleFrequency)
 #%%
 def calc_omega_0(c, m):
@@ -119,7 +119,7 @@ time.add_train_condition(NeumannCondition(neumann_fun=time_neumann_fun,
 def ode_oscillation(u, time):
     # return laplacian(u, time) + (damping / (2 * mass)) * grad(u, time) + torch.sqrt(input["stiffness"]/mass) * u
     f = laplacian(u, time) + 2*calc_delta(damping, mass) * grad(u, time) + (calc_omega_0(stiffness, mass)**2) * u
-    plt.plot(time.detach().numpy(), u.detach().numpy(), "x")
+    # plt.plot(time.detach().numpy(), u.detach().numpy(), "x")
     return f
 # a DiffEqCondition works similar to the boundary condiitions
 train_cond = DiffEqCondition(pde=ode_oscillation,
@@ -127,19 +127,19 @@ train_cond = DiffEqCondition(pde=ode_oscillation,
                               norm=norm,
                               sampling_strategy='random',
                               weight=1.0,
-                              dataset_size=2048,
+                              dataset_size=1024,
                               data_plot_variables='time')#)('time'))
 #%%
 setup = Setting(variables=time,
                 train_conditions={'ode_oscillation': train_cond},
                 val_conditions={},
                 solution_dims={'u': 1},
-                n_iterations=50)
+                n_iterations=25)
 #%%
 solver = PINNModule(model=SimpleFCN(variable_dims=setup.variable_dims,
                                     solution_dims=setup.solution_dims,
                                     depth=4,
-                                    width=25,
+                                    width=15,
                                     activation_func=torch.nn.Mish()),
                     optimizer=torch.optim.Adam, # Adam
                     lr=1e-3,
@@ -152,7 +152,7 @@ trainer = pl.Trainer(gpus='-1' if torch.cuda.is_available() else None,
                      benchmark=True,
                      check_val_every_n_epoch=2,
                      log_every_n_steps=10,
-                     max_epochs=6,
+                     max_epochs=8,
                      checkpoint_callback=False
                      )
 #%%
