@@ -9,6 +9,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy import signal as sg
+import matplotlib.pyplot as plt
 
 import torch
 import pytorch_lightning as pl
@@ -79,7 +80,7 @@ y.plot()
 #%% PINN approach
 # u_tt + delta * u_t + omega**2 * u = f(t)
 
-norm = torch.nn.MSELoss()
+norm = torch.nn.MSELoss() #  #L1Loss
 
 time = Variable(name='time',
               order=1,
@@ -94,15 +95,16 @@ time = Variable(name='time',
 #               train_conditions={},
 #               val_conditions={})
 
-def time_dirichlet_fun(**input):
-    return np.ones_like(input['time'])
+def time_dirichlet_fun(time): # (time)
+    return np.ones_like(time)
 
-def time_neumann_fun(**input):
-    return np.zeros_like(input['time'])
+def time_neumann_fun(time):
+    return np.zeros_like(time)
 
 time.add_train_condition(DirichletCondition(dirichlet_fun=time_dirichlet_fun,
                                           name='dirichlet',
                                           norm=norm,
+                                          weight = 2,
                                           dataset_size=1,
                                           boundary_sampling_strategy='lower_bound_only',
                                           data_plot_variables=True))
@@ -114,9 +116,10 @@ time.add_train_condition(NeumannCondition(neumann_fun=time_neumann_fun,
                                           boundary_sampling_strategy='lower_bound_only',
                                           data_plot_variables=True))
 
-def ode_oscillation(u, **input):
-    # return laplacian(u, input['time']) + (damping / (2 * mass)) * grad(u, input['time']) + torch.sqrt(input["stiffness"]/mass) * u
-    f = laplacian(u, input['time']) + calc_delta(damping, mass) * grad(u, input['time']) + calc_omega_0(stiffness, mass) * u
+def ode_oscillation(u, time):
+    # return laplacian(u, time) + (damping / (2 * mass)) * grad(u, time) + torch.sqrt(input["stiffness"]/mass) * u
+    f = laplacian(u, time) + 2*calc_delta(damping, mass) * grad(u, time) + (calc_omega_0(stiffness, mass)**2) * u
+    plt.plot(time.detach().numpy(), u.detach().numpy(), "x")
     return f
 # a DiffEqCondition works similar to the boundary condiitions
 train_cond = DiffEqCondition(pde=ode_oscillation,
@@ -124,7 +127,7 @@ train_cond = DiffEqCondition(pde=ode_oscillation,
                               norm=norm,
                               sampling_strategy='random',
                               weight=1.0,
-                              dataset_size=50000,
+                              dataset_size=2048,
                               data_plot_variables='time')#)('time'))
 #%%
 setup = Setting(variables=time,
@@ -136,17 +139,18 @@ setup = Setting(variables=time,
 solver = PINNModule(model=SimpleFCN(variable_dims=setup.variable_dims,
                                     solution_dims=setup.solution_dims,
                                     depth=4,
-                                    width=25),
-                    optimizer=torch.optim.Adam,
+                                    width=25,
+                                    activation_func=torch.nn.Mish()),
+                    optimizer=torch.optim.Adam, # Adam
                     lr=1e-3,
                     # log_plotter=plotter
                     )
 #%%
 trainer = pl.Trainer(gpus='-1' if torch.cuda.is_available() else None,
-                     logger=False,
-                     num_sanity_val_steps=0,
+                     # logger=False,
+                     num_sanity_val_steps=1,
                      benchmark=True,
-                     check_val_every_n_epoch=50,
+                     check_val_every_n_epoch=2,
                      log_every_n_steps=10,
                      max_epochs=6,
                      checkpoint_callback=False
@@ -158,6 +162,3 @@ trainer.fit(solver, setup)
 fig = _plot(model=solver.model, solution_name="u", plot_variables=time, points=1500,
             plot_type='line') 
 fig.axes[0].set_box_aspect(1/2)
-
-    
-    

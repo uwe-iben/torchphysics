@@ -90,9 +90,11 @@ class SimpleFCN(DiffEqModel):
         width of the hidden layers
     output_dim : int
         amount of output neurons
+    activation_func : pytorch.nn class        
     """
 
-    def __init__(self, variable_dims, solution_dims, depth=3, width=20):
+    def __init__(self, variable_dims, solution_dims, depth=3, width=20,
+                 activation_func=nn.Tanh()):
         super().__init__(variable_dims=variable_dims,
                          solution_dims=solution_dims)
 
@@ -109,7 +111,7 @@ class SimpleFCN(DiffEqModel):
         for _ in range(depth):
             self.layers.append(nn.Linear(self.width, self.width))
             torch.nn.init.xavier_normal_(self.layers[-1].weight, gain=5.0/3.0)
-            self.layers.append(nn.Tanh())
+            self.layers.append(activation_func)
 
         self.layers.append(nn.Linear(self.width, self.output_dim))
         torch.nn.init.xavier_normal_(self.layers[-1].weight, gain=1)
