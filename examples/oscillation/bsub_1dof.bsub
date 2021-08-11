@@ -1,0 +1,26 @@
+#!/bin/bash -l
+# Sample script for tensorflow job
+
+## Scheduler parameters ##
+
+#BSUB -J PINN_osci            # job name
+#BSUB -o PINN_osci.%J.stdout   # optional: have output written to specific file
+#BSUB -e PINN_osci.%J.stderr   # optional: have errors written to specific file
+# #BSUB -q rb_basic               # optional: use highend nodes w/ Volta GPUs (default: Geforce GPUs)
+#BSUB -W 0:30                       # fill in desired wallclock time [hours,]minutes (hours are optional)
+#BSUB -n 2                          # min CPU cores,max CPU cores (max cores is optional)
+#BSUB -M 800                      # fill in required amount of RAM (in Mbyte)
+#BSUB -gpu "num=1"
+
+## Job parameters ##
+vEnv=pytorch-physics
+
+# Load modules
+module purge 
+## module load conda
+## module load cudnn/11.0_v8.0
+module load conda/4.3.33-readonly cuda/8.0.0 cudnn/8.0_v7.0
+
+source activate $vEnv
+
+python dof_1_baseline.py

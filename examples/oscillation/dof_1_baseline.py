@@ -33,7 +33,7 @@ torch.cuda.is_available()
 
 stiffness = 1e4
 damping = 4
-mass = 5e2
+mass = 2e2
 SampleFrequency = 1024
 t_end = 1
 t = np.linspace(0, t_end, t_end * SampleFrequency)
@@ -104,7 +104,7 @@ def time_neumann_fun(time):
 time.add_train_condition(DirichletCondition(dirichlet_fun=time_dirichlet_fun,
                                           name='dirichlet',
                                           norm=norm,
-                                          weight = 2,
+                                          weight = 200,
                                           dataset_size=1,
                                           boundary_sampling_strategy='lower_bound_only',
                                           data_plot_variables=True))
@@ -112,6 +112,7 @@ time.add_train_condition(DirichletCondition(dirichlet_fun=time_dirichlet_fun,
 time.add_train_condition(NeumannCondition(neumann_fun=time_neumann_fun,
                                           name='neumann',
                                           norm=norm,
+                                          weight=50,
                                           dataset_size=1,
                                           boundary_sampling_strategy='lower_bound_only',
                                           data_plot_variables=True))
@@ -121,12 +122,12 @@ def ode_oscillation(u, time):
     f = laplacian(u, time) + 2*calc_delta(damping, mass) * grad(u, time) + (calc_omega_0(stiffness, mass)**2) * u
     # plt.plot(time.detach().numpy(), u.detach().numpy(), "x")
     return f
-# a DiffEqCondition works similar to the boundary condiitions
+
 train_cond = DiffEqCondition(pde=ode_oscillation,
                               name='ode_oscillation',
                               norm=norm,
                               sampling_strategy='random',
-                              weight=1.0,
+                              weight=1,
                               dataset_size=1024,
                               data_plot_variables='time')#)('time'))
 #%%

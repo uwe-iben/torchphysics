@@ -1,0 +1,16 @@
+No protocol specified
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+
+  | Name  | Type      | Params
+------------------------------------
+0 | model | SimpleFCN | 1.0 K 
+------------------------------------
+1.0 K     Trainable params
+0         Non-trainable params
+1.0 K     Total params
+0.004     Total estimated model params size (MB)
+/home/krd2rng/.conda/envs/pytorch-physics/lib/python3.9/site-packages/pytorch_lightning/utilities/distributed.py:69: UserWarning: The dataloader, val dataloader 0, does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` (try 40 which is the number of cpus on this machine) in the `DataLoader` init to improve performance.
+  warnings.warn(*args, **kwargs)
+/home/krd2rng/.conda/envs/pytorch-physics/lib/python3.9/site-packages/pytorch_lightning/utilities/distributed.py:69: UserWarning: The dataloader, train dataloader, does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` (try 40 which is the number of cpus on this machine) in the `DataLoader` init to improve performance.
+  warnings.warn(*args, **kwargs)
