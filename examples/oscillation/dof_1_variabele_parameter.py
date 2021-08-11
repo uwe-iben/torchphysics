@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Jul  5 14:35:18 2021
+Created on Wed Aug 11 11:00:02 2021
 
 @author: KRD2RNG
 """
@@ -30,53 +30,40 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0" # select GPUs to use
 #pl.seed_everything(43) # set a global seed
 torch.cuda.is_available()
 # matplotlib.style.use('default')
+def calc_mass(c):
+    return c / (2 * np.pi) **2
 
-stiffness = 1e4
+n_stiffness = 100
+stiffness_array = np.linspace(1e3, 1e4, n_stiffness) #1e4
 damping = 100
-mass = stiffness / (2 * np.pi) **2 # 2e2
+mass = calc_mass(stiffness_array) # 2e2
+
 SampleFrequency = 1024
 t_end = 1
 t = np.linspace(0, t_end, t_end * SampleFrequency)
 
 eval_points = 32
 #%%
+
 def calc_omega_0(c, m):
     return np.sqrt(c/m)
 def calc_delta(b, m):
     return b/(2*m)
 #%%
-def time_evolution(A, B, C, D, excitation, x, t):
-    """calculate time response"""
-    y = np.zeros((len(D), len(t)))
-    for k in range(0, len(t)):
-        y[:, k] = C @ x.ravel() + D @ excitation[:, k]
-        x = A @ x.ravel() + B @ excitation[:, k]
-    return(pd.DataFrame(data=y.T, index=t, columns=["state_space"]))
-
-def state_space_dof_1(excitation, x0):
-    Ac = np.array([[0, 1], [-stiffness/mass, -damping/mass]])
-    Bc = np.array([[0], [1/mass]])
-    Cc = np.array([[1, 0]])
-    Dc = np.array([[0]])
-
-    # Discrete
-    A, B, C, D, _ = sg.cont2discrete((Ac, Bc, Cc, Dc), dt=1/SampleFrequency)
-
-    y = time_evolution(A, B, C, D, excitation, x0, t)
-    return y
-
 def analytical_dof_1(x0):
     delta = calc_delta(damping, mass)
-    omega_0 = calc_omega_0(stiffness, mass)
+    omega_0 = calc_omega_0(stiffness_array, mass)
     omega_d = np.sqrt(omega_0**2 - delta**2)
-    y = np.exp(-delta * t) * (((x0[1] + delta * x0[0]) / omega_d) * np.sin(omega_d * t) + x0[0] * np.cos(omega_d * t))
-    return pd.DataFrame(data=y.T, index=t)
+    y = np.exp(-delta[np.newaxis,:] * t[:,np.newaxis]) * \
+        (((x0[1] + delta[np.newaxis,:] * x0[0]) / omega_d[np.newaxis,:]) * np.sin(omega_d[np.newaxis,:] * t[:,np.newaxis]) \
+         + x0[0] * np.cos(omega_d[np.newaxis,:] * t[:,np.newaxis]))
+    return pd.DataFrame(data=y, index=t, columns= np.ceil(stiffness_array))
 
 #%% reference solution
 dirac = np.array([sg.unit_impulse(len(t), idx=0)])
 x0 = np.array([[1], [0]])
-y = state_space_dof_1(dirac, x0)
-y["analytical"] = analytical_dof_1(x0)
+y = analytical_dof_1(x0)
+y.plot(legend=False)
 #%% PINN approach
 # u_tt + 2*delta * u_t + omega**2 * u = f(t)
 
@@ -86,6 +73,12 @@ time = Variable(name='time',
               order=1,
               domain=Interval(low_bound=0,
                               up_bound=t_end),
+              train_conditions={},
+              val_conditions={})
+stiffness = Variable(name='stiffness',
+              order=1,
+              domain=Interval(low_bound=1e3,
+                              up_bound=1e4),
               train_conditions={},
               val_conditions={})
 
@@ -111,9 +104,10 @@ time.add_train_condition(NeumannCondition(neumann_fun=time_neumann_fun,
                                           boundary_sampling_strategy='lower_bound_only',
                                           data_plot_variables=True))
 
-def ode_oscillation(u, time):
-    f = laplacian(u, time) + 2*calc_delta(damping, mass) * grad(u, time) + (calc_omega_0(stiffness, mass)**2) * u
-    # plt.plot(time.detach().numpy(), u.detach().numpy(), "x")
+def ode_oscillation(u, time, stiffness):
+    m = calc_mass(stiffness)
+    f = laplacian(u, time) + (damping / m) * grad(u, time) + (stiffness / m) * u
+    # f = laplacian(u, time) + 2* grad(u, time) + stiffness * u
     return f
 
 train_cond = DiffEqCondition(pde=ode_oscillation,
@@ -122,9 +116,9 @@ train_cond = DiffEqCondition(pde=ode_oscillation,
                               sampling_strategy='grid',
                               weight=1,
                               dataset_size=eval_points,
-                              data_plot_variables=True)#)('time'))
+                              data_plot_variables=("time"))#)('time'))True
 #%%
-setup = Setting(variables=time,
+setup = Setting(variables=(time,stiffness), 
                 train_conditions={'ode_oscillation': train_cond},
                 val_conditions={},
                 solution_dims={'u': 1},
@@ -141,21 +135,55 @@ solver = PINNModule(model=SimpleFCN(variable_dims=setup.variable_dims,
                     )
 #%%
 trainer = pl.Trainer(gpus='-1' if torch.cuda.is_available() else None,
-                     # logger=False,
-                     num_sanity_val_steps=1,
-                     benchmark=True,
-                     check_val_every_n_epoch=2,
-                     log_every_n_steps=10,
-                     max_epochs=12,
-                     checkpoint_callback=False
-                     )
+                      # logger=False,
+                      num_sanity_val_steps=1,
+                      benchmark=True,
+                      check_val_every_n_epoch=2,
+                      log_every_n_steps=10,
+                      max_epochs=12,
+                      checkpoint_callback=False
+                      )
+#%%
+
+from torchphysics.problem.datacreator import InnerDataCreator
+import time
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(device)
+dc = InnerDataCreator(variables={'x': x, 't': t, 'D': D},
+                      dataset_size=[2000, 400, 1], 
+                      # Here we use different number of points for each variable
+                      # x has 100 points, t = 20 and D only 1 (constant) value.
+                      # The number of total points are all different combinations:
+                      # -> 2000 different points
+                      sampling_strategy='grid')
+input_dic = dc.get_data() # create the data
+# Change the D (if you want):
+input_dic['D'] = 10 * np.ones((len(input_dic['D']), 1))
+# cast everything to tensors:
+for name in input_dic:
+    input_dic[name] = torch.FloatTensor(input_dic[name]).to(device)
+# Evaluate
+solver = solver.to(device)
+start = time.time()
+pred = solver.forward(input_dic) 
 #%%
 trainer.fit(solver, setup)
-#%%
-_, input_dic = _create_domain(time, SampleFrequency * t_end, "cpu")
-y["PINN"] = solver.model(input_dic)["u"].detach().numpy()
-y.plot()
+# #%%
+device = "cpu"
 
+#%%
+input_dic = {time.name: torch.tensor(time.domain.grid_for_plots(256), device=device),
+              stiffness.name: torch.tensor(stiffness.domain.grid_for_plots(25), device=device),
+              }
+
+torch.cat([v for v in input_dic.values()], dim=1)
+# y["PINN"] = solver.model.forward(input_dic)["u"].detach().numpy()
+# y.plot()
+
+
+# _plot(solver.model, solution_name="u", plot_variables = [time, stiffness], points=256, angle=[30, 30],
+#           dic_for_other_variables=None, all_variables=None, device='cpu', 
+#           plot_output_entries=[-1], plot_type='surface_2D')
 
 # fig = _plot(model=solver.model, solution_name="u", plot_variables=time, points=256,
 #             plot_type='line') 
