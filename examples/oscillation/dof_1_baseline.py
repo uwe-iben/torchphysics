@@ -22,18 +22,18 @@ from torchphysics.problem.condition import (DirichletCondition,
 from torchphysics.models.fcn import SimpleFCN
 from torchphysics import PINNModule
 from torchphysics.utils import laplacian, grad
-from torchphysics.utils.plot import _plot
+from torchphysics.utils.plot import _plot, _create_domain
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2" # select GPUs to use
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" # select GPUs to use
 
 #pl.seed_everything(43) # set a global seed
 torch.cuda.is_available()
 # matplotlib.style.use('default')
 
 stiffness = 1e4
-damping = 4
-mass = 2e2
+damping = 100
+mass = stiffness / (2 * np.pi) **2 # 2e2
 SampleFrequency = 1024
 t_end = 1
 t = np.linspace(0, t_end, t_end * SampleFrequency)
@@ -46,7 +46,7 @@ def calc_delta(b, m):
 def time_evolution(A, B, C, D, excitation, x, t):
     """calculate time response"""
     y = np.zeros((len(D), len(t)))
-    for k in range(0, len(t)-1):
+    for k in range(0, len(t)):
         y[:, k] = C @ x.ravel() + D @ excitation[:, k]
         x = A @ x.ravel() + B @ excitation[:, k]
     return(pd.DataFrame(data=y.T, index=t, columns=["state_space"]))
@@ -75,10 +75,8 @@ dirac = np.array([sg.unit_impulse(len(t), idx=0)])
 x0 = np.array([[1], [0]])
 y = state_space_dof_1(dirac, x0)
 y["analytical"] = analytical_dof_1(x0)
-y.plot()
-
 #%% PINN approach
-# u_tt + delta * u_t + omega**2 * u = f(t)
+# u_tt + 2*delta * u_t + omega**2 * u = f(t)
 
 norm = torch.nn.MSELoss() #  #L1Loss
 
@@ -118,7 +116,6 @@ time.add_train_condition(NeumannCondition(neumann_fun=time_neumann_fun,
                                           data_plot_variables=True))
 
 def ode_oscillation(u, time):
-    # return laplacian(u, time) + (damping / (2 * mass)) * grad(u, time) + torch.sqrt(input["stiffness"]/mass) * u
     f = laplacian(u, time) + 2*calc_delta(damping, mass) * grad(u, time) + (calc_omega_0(stiffness, mass)**2) * u
     # plt.plot(time.detach().numpy(), u.detach().numpy(), "x")
     return f
@@ -126,16 +123,16 @@ def ode_oscillation(u, time):
 train_cond = DiffEqCondition(pde=ode_oscillation,
                               name='ode_oscillation',
                               norm=norm,
-                              sampling_strategy='random',
+                              sampling_strategy='grid',
                               weight=1,
-                              dataset_size=1024,
-                              data_plot_variables='time')#)('time'))
+                              dataset_size=16,
+                              data_plot_variables=True)#)('time'))
 #%%
 setup = Setting(variables=time,
                 train_conditions={'ode_oscillation': train_cond},
                 val_conditions={},
                 solution_dims={'u': 1},
-                n_iterations=25)
+                n_iterations=50)
 #%%
 solver = PINNModule(model=SimpleFCN(variable_dims=setup.variable_dims,
                                     solution_dims=setup.solution_dims,
@@ -153,13 +150,17 @@ trainer = pl.Trainer(gpus='-1' if torch.cuda.is_available() else None,
                      benchmark=True,
                      check_val_every_n_epoch=2,
                      log_every_n_steps=10,
-                     max_epochs=8,
+                     max_epochs=12,
                      checkpoint_callback=False
                      )
 #%%
 trainer.fit(solver, setup)
 #%%
+_, input_dic = _create_domain(time, SampleFrequency, "cpu")
+y["PINN"] = solver.model(input_dic)["u"].detach().numpy()
+y.plot()
 
-fig = _plot(model=solver.model, solution_name="u", plot_variables=time, points=1500,
-            plot_type='line') 
-fig.axes[0].set_box_aspect(1/2)
+
+# fig = _plot(model=solver.model, solution_name="u", plot_variables=time, points=256,
+#             plot_type='line') 
+# fig.axes[0].set_box_aspect(1/2)
