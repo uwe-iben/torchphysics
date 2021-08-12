@@ -172,19 +172,20 @@ trainer.fit(solver, setup)
 device = "cpu"
 
 #%%
-input_dic = {time.name: torch.tensor(time.domain.grid_for_plots(256), device=device),
-              stiffness.name: torch.tensor(stiffness.domain.grid_for_plots(25), device=device),
-              }
+stiff_value = 1000
+point_num = 256
+input_dic = {time.name: torch.tensor(time.domain.grid_for_plots(point_num), device=device),
+             stiffness.name: stiff_value * torch.ones((point_num, 1), device=device),
+             }  # for the stiffnes we want one fixed value, not a grid
 
 torch.cat([v for v in input_dic.values()], dim=1)
-# y["PINN"] = solver.model.forward(input_dic)["u"].detach().numpy()
-# y.plot()
+#y["PINN"] = solver.model.forward(input_dic)["u"].detach().numpy()
+#y.plot()
 
+# Plot surface with one axis time the other stiffness:
+_plot(solver.model, solution_name="u", plot_variables = [time, stiffness], points=256, angle=[30, 30],
+      dic_for_other_variables=None, all_variables=None, device='cpu')
 
-# _plot(solver.model, solution_name="u", plot_variables = [time, stiffness], points=256, angle=[30, 30],
-#           dic_for_other_variables=None, all_variables=None, device='cpu', 
-#           plot_output_entries=[-1], plot_type='surface_2D')
-
-# fig = _plot(model=solver.model, solution_name="u", plot_variables=time, points=256,
-#             plot_type='line') 
-# fig.axes[0].set_box_aspect(1/2)
+# Plot line over time, need to set the used stiffness in dic_for_other_variables: 
+fig = _plot(model=solver.model, solution_name="u", plot_variables=time, points=256,
+            plot_type='line', dic_for_other_variables={'stiffness': 3}) #<- here set your stiffness-value
