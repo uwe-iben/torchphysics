@@ -1,4 +1,3 @@
-from typing import NewType
 import warnings
 import abc
 from collections import Counter
@@ -48,6 +47,11 @@ class Domain:
             self.dim = dim
 
     @abc.abstractmethod
+    @property
+    def is_initialized(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def is_inside(self, points):
         raise NotImplementedError
 
@@ -77,14 +81,38 @@ class Domain:
         raise NotImplementedError
 
 
+class LambdaDomain(Domain):
+    def __init__(self, class_, params, space, dim):
+        super().__init__(space, dim=dim)
+        self.class_ = class_
+        self.params = params
+
+    def __call__(self, point):
+        p = {}
+        for k in self.params:
+            if callable(self.params[k]):
+                p[k] = self.params[k](point)
+            else:
+                p[k] = self.params[k]
+        return self.class_(space=self.space, **p)
+    
+    def __mul__(self, other):
+        return super().__mul__(other)
+
+
 class BoundaryDomain(Domain):
     def __init__(self, domain, dim):
         super().__init__(domain.space, dim=domain.dim-1)
+
+    @abc.abstractmethod
+    def normal(self, points):
+        pass
 
 
 class Domain3D(Domain):
     def __init__(self, mesh, space):
         self.mesh = mesh
+        assert space.dim == 3
         super().__init__(space, dim=3)
 
 
@@ -99,9 +127,23 @@ class ProductDomain(Domain):
         if not domain_a.space.keys().isdisjoint(domain_b.space):
             warnings.warn("""Warning: The space of a ProductDomain will be the product
                 of its factor domains spaces. This may lead to unexpected behaviour.""")
-        space = domain_a.space + domain_b.space
-        super().__init__(space)
+        space = domain_a.space * domain_b.space
+        super().__init__(space, dim=domain_a.dim + domain_b.dim)
 
+    def is_inside(self, points):
+        return 
+
+    def bounding_box(self):
+        return 
+
+    def sample_grid(self, n):
+        return super().sample_grid(n)
+
+    def sample_random_uniform(self, n):
+        return super().sample_random_uniform(n)
+
+
+class LambdaProductDomain(ProductDomain):
     def is_inside(self, points):
         return super().is_inside(points)
 
@@ -112,7 +154,10 @@ class ProductDomain(Domain):
 # use shapely or trimesh as much as possible
 
 class Point(Domain):
-    pass
+    def __init__(self, coord, space):
+        super().__init__(space, dim=0)
+        if callable(coord):
+            return LambdaDomain(Point, {'coord': coord}, space=space, dim=0)
 
 
 class Interval(Domain):
@@ -129,7 +174,9 @@ class Polyeder(Domain):
 
 I = Interval(T, [0, 1])
 R = Interval(X, lambda t: [0, 2**(-t)])
+G = Circle(Y, center = lambda t: [0,t], radius = 1)
 D = R * I
+E = G * D
 # evaluate all Lambda functions in ProductDomain
 
 
@@ -156,13 +203,18 @@ class DataSampler:
         # returns a sampler that samples from two samplers
         return ConcatSampler(self, other)
 
+
 class ProductSampler(DataSampler):
     def __init__(self, sampler_a, sampler_b):
         self.sampler_a = sampler_a
         self.sampler_b = sampler_b
         super().__init__(len(self.sampler_a) * len(self.sampler_b))
-    
+
     def sample_points(self):
+        a_points = sampler_a.sample_points()
+        for a in a_points:
+            sampler_b.update(a)
+
         return super().sample_points()
 
 
@@ -175,6 +227,27 @@ class ConcatSampler(DataSampler):
     def sample_points(self):
         samples_a = self.sampler_a.sample_points()
         samples_b = self.sampler_b.sample_points()
+
+
+class GridSampler(DataSampler):
+    def __init__(self, domain, n_points):
+        super().__init__(n_points)
+        self.domain = domain
+
+    def sample_points(self):
+        return self.domain.sample_grid(len(self))
+
+
+class RandomUniformSampler(DataSampler):
+    pass
+
+
+class GaussianSampler:
+    pass
+
+sampler_a = GridSampler(domain=T.boundary, n_points=1)
+sampler_b = RandomUniformSampler(domain=X, n_points=100)
+t_dirichlet_sampler = sampler_a * sampler_b
 
 
 class Condition(torch.nn.Module):

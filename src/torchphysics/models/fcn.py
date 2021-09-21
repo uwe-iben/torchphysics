@@ -120,7 +120,7 @@ class SimpleFCN(DiffEqModel):
         torch.nn.init.xavier_normal_(self.layers[-1].weight, gain=5.0/3.0)
         self.layers.append(nn.Tanh())
 
-        for _ in range(depth):
+        for _ in range(depth-1):
             self.layers.append(nn.Linear(self.width, self.width))
             torch.nn.init.xavier_normal_(self.layers[-1].weight, gain=5.0/3.0)
             self.layers.append(nn.Tanh())
