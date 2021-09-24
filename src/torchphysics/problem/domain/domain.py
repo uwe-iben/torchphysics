@@ -2,148 +2,131 @@ import abc
 import numpy as np
 
 
-class Domain():
-    '''Parent class for all domains.
-
-    Parameters
-    ----------
-    dim : int
-        The dimension of the domain.
-    volume : float
-        The "volume" of the domain. Stands for: 
-            - 1D = length
-            - 2D = area
-            - 3D = volume 
-    surface : float
-        The "surface" area of the domain. Stands for:
-            - 1D = boundary points (always 2)
-            - 2D = perimeter
-            - 3D = surface area              
-    tol : number
-        The error tolerance for checking if points are inside or at the boundary.
-    '''
-
-    def __init__(self, dim, volume, surface, tol):
-        self.dim = dim
-        self.volume = volume
-        self.surface = surface
+class Domain:
+    def __init__(self, space, dim=None, tol=1e-06):
+        self.space = space
         self.tol = tol
-   
-    def sample_boundary(self, n, type='random'):
-        '''Samples points at the boundary of the domain.
+        if dim is None:
+            self.dim = self.space.dim
+        else:
+            self.dim = dim
+
+    @property
+    def is_initialized(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def __add__(self, other):
+        """Creates the union of the two input domains.
 
         Parameters
         ----------
-        n : int
-            Desired number of sample points.
-        type : {'random', 'grid'}
-            The sampling strategy. All child classes implement at least a random
-            and a grid sampling. For additional strategies check the specific class.
-            - 'random' : returns uniformly distributed points on the boundary
-            - 'grid' : creates a grid over the boundary
+        other : Domain
+            The other domain that should be united with the domain.
+            Has to be of the same dimension.
+        """
+        raise NotImplementedError
 
-        Returns
-        -------
-        np.array
-            A array containing the points.
-        '''
-        if type == 'random':
-            return self._random_sampling_boundary(n)
-        elif type == 'grid':
-            return self._grid_sampling_boundary(n)
-        else:
-            raise NotImplementedError
-
-    def sample_inside(self, n, type='random'):
-        '''Samples points in the inside of the domain
+    @abc.abstractmethod
+    def __sub__(self, other):
+        """Creates the cut of the two input domains.
 
         Parameters
         ----------
-        n : int
-            Desired number of sample points
-        type : {'random', 'grid'}
-            The sampling strategy. All child classes implement at least a random
-            and a grid sampling. For additional strategies check the specific class
-            - 'random' : returns uniformly distributed points in the domain
-            - 'grid' : creates a evenly grid over the domain.
-                       Since it is not always possible to get a grid with excatly n pts
-                       the center of the domain is added to get n points in total
+        other : Domain
+            The other domain that should be cut off the domain.
+            Has to be of the same dimension.
+        """
+        raise NotImplementedError
 
-        Returns
-        -------
-        np.array
-            A array containing the points
-        '''
-        if type == 'random':
-            return self._random_sampling_inside(n)
-        elif type == 'grid':
-            return self._grid_sampling_inside(n)
-        else:
-            raise NotImplementedError
+    @abc.abstractmethod    
+    def __and__(self, other):
+        """Creates the intersection of the two input domains.
+
+        Parameters
+        ----------
+        other : Domain
+            The other domain that should be intersected with the domain.
+            Has to be of the same dimension.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def is_inside(self, points):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def bounding_box(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def sample_grid(self, n):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def sample_random_uniform(self, n):
+        raise NotImplementedError
+
+    def __mul__(self, other):
+        return ProductDomain(self, other)
+
+    @property
+    def boundary(self):
+        # Domain object of the boundary
+        raise NotImplementedError
+
+    @property
+    def inner(self):
+        # open domain
+        raise NotImplementedError
 
     def _cut_points(self, n, points):
-        """Cuts away some random points,
-        if more than n were sampled (can happen by grid-sampling).
+        """Deletes some random points, if more than n were sampled
+        (can for example happen by grid-sampling).
         """
         if len(points) > n:
             index = np.random.choice(len(points), int(n), replace=False)
             return points[index]
         return points
 
-    def _check_inside_grid_enough_points(self, n, points):
-        # checks if there are not enough points for the grid.
-        # If not, add some random points 
+    def _check_grid_enough_points(self, n, points):
+        """Checks if there are not enough points for the grid.
+        If not, add some random points.
+        """ 
         if len(points) < n:
-            new_points = self._random_sampling_inside(n-len(points))
+            new_points = self.sample_random_uniform(n-len(points))
             points = np.append(points, new_points, axis=0)
         return points
 
-    def _check_boundary_grid_enough_points(self, n, points):
-        # checks if there are not enough points for the grid.
-        # If not, add some random points 
-        if len(points) < n:
-            new_points = self._random_sampling_boundary(n-len(points))
-            points = np.append(points, new_points, axis=0)
+    def _check_single_point(self, points):
+        if len(np.shape(points)) == 1:
+            points = np.array([points])
         return points
 
-    @abc.abstractmethod
-    def _compute_bounds(self):
-        return 
-        
-    @abc.abstractmethod
-    def is_inside(self, points):
-        return
+
+class LambdaDomain(Domain):
+    def __init__(self, class_, params, space, dim, tol):
+        super().__init__(space, dim=dim, tol=tol)
+        self.class_ = class_
+        self.params = params
+
+    def __call__(self, point):
+        p = {}
+        for k in self.params:
+            if callable(self.params[k]):
+                p[k] = self.params[k](point)
+            else:
+                p[k] = self.params[k]
+        return self.class_(space=self.space, tol=self.tol, **p)
+    
+    def __mul__(self, other):
+        return super().__mul__(other)
+
+
+class BoundaryDomain(Domain):
+    def __init__(self, domain):
+        super().__init__(domain.space, dim=domain.dim-1, tol=domain.tol)
 
     @abc.abstractmethod
-    def is_on_boundary(self, points):
-        return
-
-    @abc.abstractmethod
-    def _random_sampling_inside(self, n):
-        return
-
-    @abc.abstractmethod
-    def _grid_sampling_inside(self, n):
-        return
-
-    @abc.abstractmethod
-    def _random_sampling_boundary(self, n):
-        return
-
-    @abc.abstractmethod
-    def _grid_sampling_boundary(self, n):
-        return
-
-    @abc.abstractmethod
-    def boundary_normal(self, points):
-        return
-
-    @abc.abstractmethod
-    def grid_for_plots(self, n):
-        return
-
-    def serialize(self):
-        dct = {}
-        dct['dim'] = self.dim
-        dct['tol'] = self.tol
-        return dct
+    def normal(self, points):
+        pass

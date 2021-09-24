@@ -2,10 +2,136 @@ import numpy as np
 import trimesh
 import logging
 
-from .domain import Domain
-from .domain2D import Circle, Polygon2D
+from .domain import Domain, LambdaDomain, BoundaryDomain
+
+class Domain3D(Domain):
+
+    def __init__(self, space, mesh, tol=0.000001):
+        super().__init__(space, dim=3, tol=tol)
+        self.mesh = mesh
+        # Trimesh gives a warning when not enough points are sampled. We already
+        # take care of this problem. So set the logging only to errors.
+        logging.getLogger("trimesh").setLevel(logging.ERROR)
+
+    def is_inside(self, points):
+        return self.mesh.contains(points).reshape(-1,1)
+
+    def bounding_box(self):
+        return super().bounding_box()
+
+    def export_file(self, name_of_file):
+        '''Exports the mesh to a file.
+
+        Parameters
+        ----------
+        name_of_file : str
+            The name of the file.
+        '''
+        self.mesh.export(name_of_file)
+
+    def sample_random_uniform(self, n):
+        points = np.empty((0,self.dim))
+        while len(points) < n:
+            new_points = trimesh.sample.volume_mesh(self.mesh, n-len(points))
+            points = np.append(points, new_points, axis=0)
+        return points.astype(np.float32)
+
+    def __add__(self, other):
+        assert other.dim == 3
+        new_mesh = trimesh.boolean.union([self, other])
+        return Domain3D(space=self.space, mesh=new_mesh,
+                        tol=np.min[self.tol, other.tol])
+
+    def __sub__(self, other):
+        assert other.dim == 3
+        new_mesh = trimesh.boolean.difference([self, other])
+        return Domain3D(space=self.space, mesh=new_mesh,
+                        tol=np.min[self.tol, other.tol])
+
+    def __and__(self, other):
+        assert other.dim == 3
+        new_mesh = trimesh.boolean.intersection([self, other])
+        return Domain3D(space=self.space, mesh=new_mesh,
+                        tol=np.min[self.tol, other.tol])
+
+    def _create_rotation_matrix(self, orientation):
+        # create a matrix to rotate the domain, to be parallel to the z-axis
+        # From:
+        # https://math.stackexchange.com/questions
+        # /180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d
+        c = -orientation[2] # cosine of angle between orientation and (0,0,-1)
+        v = [-orientation[1], orientation[0], 0] # cross pord. 
+        if c == -1: # orientation is (0,0,1) -> do nothing
+            return np.eye(3)
+        else: 
+            I = np.eye(3)
+            M = np.array([[0, 0, v[1]], [0, 0, -v[0]], [-v[1], v[0], 0]])
+            R = I + M + 1/(1+c)*np.linalg.matrix_power(M, 2)
+            return R
+
+class Box(Domain3D):
+
+    def __new__(cls, space, corner_o, corner_x, corner_y, corner_z, tol=1e-06):
+        if any([callable(corner_o), callable(corner_x), 
+                callable(corner_y), callable(corner_z)]):
+                params = {'corner_o': corner_o, 'corner_x': corner_x, 
+                          'corner_y': corner_y, 'corner_z': corner_z}
+                return LambdaDomain(class_=cls, params=params, space=space,
+                                    dim=3, tol=tol)
+        return super(Box, cls).__new__(cls)
+
+    def __init__(self, space, corner_o, corner_x, corner_y, corner_z, tol=1e-06):
+        mesh = self._create_unit_cube()
+        trans_matrix = self._create_transform_matrix(corner_o, corner_x, 
+                                                     corner_y, corner_z)
+        mesh.apply_transform(trans_matrix)
+        mesh.apply_translation(corner_o)
+        super().__init__(space=space, mesh=mesh, tol=tol)
+
+    def _create_unit_cube(self):
+        cube = trimesh.primitives.Box()
+        cube.apply_translation([0.5, 0.5, 0.5])
+        return cube
+
+    def _create_transform_matrix(self, corner_o, corner_x, corner_y, corner_z):
+        matrix = np.eye(4)
+        matrix[:3, 0] = np.array(corner_x) - np.array(corner_o)
+        matrix[:3, 1] = np.array(corner_y) - np.array(corner_o)
+        matrix[:3, 2] = np.array(corner_z) - np.array(corner_o)
+        return matrix
+
+    def sample_random_uniform(self, n):
+        points = self.mesh.sample_volume(n)
+        return points.astype(np.float32)
 
 
+class Sphere(Domain3D):
+
+    def __init__(self, space, center, radius, tol=0.000001):
+        mesh = trimesh.primitives.Sphere(center=center, radius=radius)
+        super().__init__(space=space, mesh=mesh, tol=tol)
+
+
+class Cylinder(Domain3D):
+
+    def __init__(self, space, center, radius, height,
+                 orientation=[0, 0, 1], tol=1e-06):
+        mesh = trimesh.creation.cylinder(radius=radius, height=height)
+        rotation = self._create_rotation_matrix(orientation)
+        mesh.apply_transform(rotation)
+        mesh.apply_translation(center)
+        super().__init__(space=space, mesh=mesh, tol=tol)
+
+    def _create_rotation_matrix(self, orientation):
+        norm_ori = np.linalg.norm(orientation)
+        if not np.isclose(norm_ori, 1):
+            orientation = np.divide(orientation, norm_ori)
+        m = np.linalg.inv(super()._create_rotation_matrix(orientation))
+        matrix = np.eye(4)
+        matrix[:3, :3] = m
+        return matrix
+
+"""
 class Box(Domain):
     '''Class for arbitrary boxes in 3D.
 
@@ -57,42 +183,42 @@ class Box(Domain):
         return
 
     def _compute_side_lengths(self):
-        """Computes the vertice lengths of the box. 
+         Computes the vertice lengths of the box. 
 
         Returns
         -------
         list:
             The length in the form:
             [len(corner_x-corner_o), len(corner_y-corner_o), len(corner_z-corner_o)] 
-        """
+         
         side_1 = np.linalg.norm(self.corner_x-self.corner_o)
         side_2 = np.linalg.norm(self.corner_y-self.corner_o)
         side_3 = np.linalg.norm(self.corner_z-self.corner_o)
         return [side_1, side_2, side_3]
 
     def _compute_side_areas(self):
-        """Computes the side areas of the box. 
+         Computes the side areas of the box. 
 
         Returns
         -------
         list:
             The areas in the form:
             [x-y-areas, x-z-area, y-z-area] 
-        """
+         
         area_1 = self.side_lengths[0]*self.side_lengths[1]
         area_2 = self.side_lengths[0]*self.side_lengths[2]
         area_3 = self.side_lengths[2]*self.side_lengths[1]
         return [area_1, area_2, area_3]
 
     def _compute_normals(self):
-        """Computes the normal vectors of the box. 
+         Computes the normal vectors of the box. 
 
         Returns
         -------
         np.array:
             The normal vectors in the form:
             [x-normal, -x-normal, y-normal, -y-normal, ...] 
-        """
+         
         x_normal = (self.corner_x-self.corner_o)/self.side_lengths[0] 
         y_normal = (self.corner_y-self.corner_o)/self.side_lengths[1] 
         z_normal = (self.corner_z-self.corner_o)/self.side_lengths[2]
@@ -117,7 +243,7 @@ class Box(Domain):
         return np.logical_and(in_x, np.logical_and(in_y, in_z))
 
     def is_inside(self, points):
-        """Checks if the given points are inside the box.
+        Checks if the given points are inside the box.
 
         Parameters
         ----------
@@ -130,12 +256,12 @@ class Box(Domain):
         np.array
             Every entry of the output contains either true,
             if the points was inside, or false if not.
-        """        
+              
         points = self._transform_to_unit_cube(points)
         return self._check_is_inside_unit_cube(points).reshape(-1, 1)
 
     def is_on_boundary(self, points):
-        """Checks if the given points are on the boundary of the circle.
+        Checks if the given points are on the boundary of the circle.
 
         Parameters
         ----------
@@ -148,7 +274,7 @@ class Box(Domain):
         np.array
             Every entry of the output contains either true,
             if the points was on the boundary, or false if not.
-        """
+        
         points = self._transform_to_unit_cube(points)
         inside = self._check_is_inside_unit_cube(points)
         bound_x = (np.isclose(points[:, 0], 0, atol=self.tol)
@@ -258,8 +384,8 @@ class Box(Domain):
         return points.astype(np.float32)
 
     def serialize(self):
-        """to show data/information in tensorboard
-        """
+        to show data/information in tensorboard
+        
         dct = super().serialize()
         dct['name'] = 'Box'
         dct['origin'] = [int(a) for a in list(self.corner_o)]
@@ -269,13 +395,13 @@ class Box(Domain):
         return dct
 
     def _compute_bounds(self):
-        """computes bounds of the domain
+        computes bounds of the domain
 
         Returns
         -------
         np.array:
             The bounds in the form: [min_x, max_x, min_y, max_y, min_z, max_z]
-        """
+        
         # all corners of the box
         corners = np.array([self.corner_o, self.corner_x, self.corner_y,
                             self.corner_y-self.corner_o+self.corner_x, 
@@ -332,7 +458,7 @@ class Box(Domain):
 
 
 class Sphere(Domain):
-    """Class for arbitrary spheres.
+    Class for arbitrary spheres.
 
     Parameters
     ----------
@@ -342,7 +468,7 @@ class Sphere(Domain):
         The radius of the sphere.
     tol : number, optional
         The error tolerance for checking if points are inside or at the boundary.
-    """
+    
     def __init__(self, center, radius, tol=1e-06):
         super().__init__(dim=3, volume=4/3*np.pi*radius**2,
                          surface=4*np.pi*radius**2, tol=tol)
@@ -350,7 +476,7 @@ class Sphere(Domain):
         self.radius = radius
 
     def is_inside(self, points):
-        """Checks if the given points are inside the open sphere.
+         Checks if the given points are inside the open sphere.
 
         Parameters
         ----------
@@ -363,13 +489,13 @@ class Sphere(Domain):
         np.array
             Every entry of the output contains either true,
             if the points was inside, or false if not.
-        """
+         
         points = np.subtract(points, self.center)
         inside = np.linalg.norm(points, axis=1) < (self.radius + self.tol)
         return inside.reshape(-1, 1)
 
     def is_on_boundary(self, points):
-        """Checks if the given points are on the boundary of the sphere.
+         Checks if the given points are on the boundary of the sphere.
 
         Parameters
         ----------
@@ -382,20 +508,20 @@ class Sphere(Domain):
         np.array
             Every entry of the output contains either true,
             if the points was on the boundary, or false if not.
-        """
+         
         points = np.subtract(points, self.center)
         on_bound = np.isclose(np.linalg.norm(points, axis=1),
                               self.radius, atol=self.tol)        
         return on_bound.reshape(-1, 1)
 
     def _compute_bounds(self):
-        """computes bounds of the sphere.
+         computes bounds of the sphere.
 
         Returns
         -------
         np.array:
             The bounds in the form: [min_x, max_x, min_y, max_y, min_z, max_z]
-        """
+         
         low_b = np.subtract(self.center, self.radius)
         up_b = np.add(self.center, self.radius)
         return [low_b[0], up_b[0], low_b[1], up_b[1], low_b[2], up_b[2]]
@@ -479,8 +605,8 @@ class Sphere(Domain):
         return normal_vectors.astype(np.float32)
 
     def serialize(self):
-        """to show data/information in tensorboard
-        """
+        to show data/information in tensorboard
+        
         dct = super().serialize()
         dct['name'] = 'Sphere'
         dct['center'] = [int(a) for a in list(self.center)]
@@ -488,8 +614,8 @@ class Sphere(Domain):
         return dct
 
     def grid_for_plots(self, n):
-        """Creates a grid of points for plotting. (grid at boundary + inside)
-        """
+        Creates a grid of points for plotting. (grid at boundary + inside)
+        
         #points_inside = self._point_grid_in_circle(int(np.ceil(3*n/4)))
         # add some points at the boundary to better show the form of the circle
         #points_boundary = self._grid_sampling_boundary(int(n/4))
@@ -498,7 +624,7 @@ class Sphere(Domain):
 
 
 class Cylinder(Domain):
-    """Class for arbitrary cylinders.
+    Class for arbitrary cylinders.
 
     Parameters
     ----------
@@ -513,7 +639,7 @@ class Cylinder(Domain):
         areas of the cylinder.
     tol : number, optional
         The error tolerance for checking if points are inside or at the boundary.
-    """
+    
     def __init__(self, center, radius, height, orientation, tol=1e-06):
         super().__init__(dim=3, volume=np.pi*radius**2*height,
                          surface=2*np.pi*(radius**2+radius*height),
@@ -554,7 +680,7 @@ class Cylinder(Domain):
         return points
 
     def is_inside(self, points):
-        """Checks if the given points are inside the cylinder.
+         Checks if the given points are inside the cylinder.
 
         Parameters
         ----------
@@ -567,7 +693,7 @@ class Cylinder(Domain):
         np.array
             Every entry of the output contains either true,
             if the points was inside, or false if not.
-        """
+         
         points = self._transform_points_to_origin_and_rotate(points)
         norm_points = np.linalg.norm(points[:, 0:2], axis=1)
         return self._inside_cylinder(points, norm_points).reshape(-1, 1)
@@ -578,7 +704,7 @@ class Cylinder(Domain):
         return np.logical_and(norm_inside, height_inside)
 
     def is_on_boundary(self, points):
-        """Checks if the given points are on the boundary of the sphere.
+         Checks if the given points are on the boundary of the sphere.
 
         Parameters
         ----------
@@ -591,7 +717,7 @@ class Cylinder(Domain):
         np.array
             Every entry of the output contains either true,
             if the points was on the boundary, or false if not.
-        """
+         
         points = self._transform_points_to_origin_and_rotate(points)
         norm_points = np.linalg.norm(points[:, 0:2], axis=1)
         norm_on_bound = np.isclose(norm_points, self.radius, atol=self.tol)
@@ -714,13 +840,13 @@ class Cylinder(Domain):
         return normals.astype(np.float32)
 
     def _compute_bounds(self):
-        """computes bounds of the cylinder.
+        computes bounds of the cylinder.
 
         Returns
         -------
         np.array:
             The bounds in the form: [min_x, max_x, min_y, max_y, min_z, max_z]
-        """
+        
         # first take size in the direction of the orientation
         A = self.center + self.height/2 * self.orientation
         B = self.center - self.height/2 * self.orientation
@@ -738,8 +864,8 @@ class Cylinder(Domain):
         return [min_b[0], max_b[0], min_b[1], max_b[1], min_b[2], max_b[2]]
 
     def serialize(self):
-        """to show data/information in tensorboard
-        """
+        to show data/information in tensorboard
+        
         dct = super().serialize()
         dct['name'] = 'Cylinder'
         dct['center'] = [int(a) for a in list(self.center)]
@@ -938,3 +1064,4 @@ class Polygon3D(Domain):
         for i in range(len(points)):
             normals[i, :] = mesh_normals[index[i]]
         return normals.astype(np.float32)
+"""
