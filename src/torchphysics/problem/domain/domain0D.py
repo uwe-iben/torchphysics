@@ -28,12 +28,13 @@ class Point(Domain):
 
     def is_inside(self, points):
         points = super()._check_single_point(points)
+        points = super().return_space_variables_to_point_list(points)
         inside = (np.linalg.norm(points - self.coord, axis=1) <= self.tol)
         return inside.reshape(-1, 1)
 
     def sample_random_uniform(self, n):
         points = self.coord * np.ones((n, 1))
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points)
 
     def sample_grid(self, n):
         # for one single point grid and random sampling is the same
@@ -84,7 +85,7 @@ class PointCloud(Domain):
         be its own point.  
     """
     def __new__(cls, space, coord_list, tol=1e-06):
-        if any(callable(coord) for coord in coord_list):
+        if callable(coord_list):
             params = {'coord_list': coord_list}
             return LambdaDomain(class_=cls, params=params, space=space,
                                 dim=2, tol=tol) 
@@ -96,6 +97,7 @@ class PointCloud(Domain):
 
     def is_inside(self, points):
         points = super()._check_single_point(points)
+        points = super().return_space_variables_to_point_list(points)
         inside = np.zeros((len(points), 1), dtype=bool)
         for i in range(len(points)):
             dist = np.linalg.norm(self.coord_list - points[i], axis=1)
@@ -114,12 +116,12 @@ class PointCloud(Domain):
 
     def sample_random_uniform(self, n):
         index = np.random.choice(len(self.coord_list), n, replace=True)
-        return self.coord_list[index]
+        return super().divide_points_to_space_variables(self.coord_list[index])
 
     def sample_grid(self, n):
         len_of_coord_list = len(self.coord_list)
         index = np.tile(range(len_of_coord_list), int(np.ceil(n/len_of_coord_list)))
-        return self.coord_list[index[:n]]
+        return super().divide_points_to_space_variables(self.coord_list[index[:n]])
 
     def __add__(self, other):
         assert other.dim == 0

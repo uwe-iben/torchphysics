@@ -19,6 +19,7 @@ class Interval(Domain):
         The right/upper bound of the interval.
     """
     def __new__(cls, space, lower_bound, upper_bound, tol=1e-06):
+        assert space.dim == 1
         if callable(lower_bound) or callable(upper_bound):
             params = {'lower_bound': lower_bound, 'upper_bound': upper_bound}
             return LambdaDomain(constructor=cls, params=params, space=space, dim=1, tol=tol)
@@ -32,19 +33,20 @@ class Interval(Domain):
 
     def is_inside(self, points):
         points = super()._check_single_point(points)
-        return ((self.lower_bound-self.tol < points[:])
-                & (points[:] < self.upper_bound+self.tol)).reshape(-1, 1)
+        points = super().return_space_variables_to_point_list(points)
+        return ((self.lower_bound-self.tol < points[:]) 
+                & (points[:] < self.upper_bound+self.tol)).reshape(-1,1)
 
     def bounding_box(self):
         return [self.lower_bound, self.upper_bound]
 
     def sample_random_uniform(self, n):
         points = np.random.uniform(self.lower_bound, self.upper_bound, (n, 1))
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points.reshape(-1, 1))
 
     def sample_grid(self, n):
         points = np.linspace(self.lower_bound, self.upper_bound, n+2)[1:-1]
-        return points.astype(np.float32).reshape(-1, 1)
+        return super().divide_points_to_space_variables(points.reshape(-1, 1))
 
     @property
     def boundary(self):
@@ -166,6 +168,8 @@ class IntervalColletion(Domain):
         self.upper_bound = np.max(bounds[:, 1])
 
     def is_inside(self, points):
+        points = super()._check_single_point(points)
+        points = super().return_space_variables_to_point_list(points)
         inside = np.zeros((len(points), 1), dtype=bool)
         for i in self.intervals:
             in_i = i.is_inside(points)
@@ -185,7 +189,7 @@ class IntervalColletion(Domain):
             points[range(current_n, current_n+scaled_n)] = new_points
             current_n += scaled_n
             counter += 1
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points)
 
     def sample_grid(self, n):
         points = np.zeros((n, 1))
@@ -195,7 +199,7 @@ class IntervalColletion(Domain):
             points[range(current_n, current_n+scaled_n)] = i.sample_grid(scaled_n)
             current_n += scaled_n
             counter += 1
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points)
 
     def _scale_number_of_points(self, n, current_n, counter, i):
         length = i.upper_bound - i.lower_bound
@@ -306,6 +310,7 @@ class BoundaryDomain1D(BoundaryDomain):
 
     def normal(self, points):
         points = super()._check_single_point(points)
+        points = super().return_space_variables_to_point_list(points)
         normals = np.ones_like(points)
         index_left = self._get_index_left(points)
         normals[index_left] *= -1

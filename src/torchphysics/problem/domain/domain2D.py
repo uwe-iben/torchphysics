@@ -42,6 +42,7 @@ class Domain2D(Domain):
 
     def is_inside(self, points):
         points = super()._check_single_point(points)
+        points = super().return_space_variables_to_point_list(points)
         inside = np.empty(len(points), dtype=bool)
         for i in range(len(points)):
             point = s_geo.Point(points[i])
@@ -67,7 +68,7 @@ class Domain2D(Domain):
                 t_area = t.area
         points = self._check_enough_points_sampled(n, points, big_t)
         points = super()._cut_points(n, points)
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points)
 
     def _sample_in_triangulation(self, t, n):
         (x0, y0), (x1, y1), (x2, y2), _ = t.exterior.coords
@@ -106,7 +107,7 @@ class Domain2D(Domain):
         points = self._delete_outside(points)
         points = super()._check_grid_enough_points(n, points)
         points = super()._cut_points(n, points)
-        return points
+        return super().divide_points_to_space_variables(points)
 
     def _create_points_in_bounding_box(self, n):
         bounds = self.bounding_box()
@@ -136,6 +137,7 @@ class BoundaryDomain2D(BoundaryDomain):
 
     def is_inside(self, points):
         points = super()._check_single_point(points)
+        points = super().return_space_variables_to_point_list(points)
         on_bound = np.empty(len(points), dtype=bool)
         for i in range(len(points)):
             point = s_geo.Point(points[i])
@@ -145,6 +147,9 @@ class BoundaryDomain2D(BoundaryDomain):
 
     def bounding_box(self):
         return self.domain.bounding_box()
+
+    def outline(self):
+        return self.domain.outline()
 
     def sample_random_uniform(self, n):
         line_points = np.random.uniform(0, self.domain.polygon.boundary.length, n)
@@ -167,14 +172,14 @@ class BoundaryDomain2D(BoundaryDomain):
             points, index, current_length = \
                 self._distribute_line_to_boundary(points, index, line_points, 
                                                   boundary_part, current_length)
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points)
 
     def _distribute_line_to_boundary(self, points, index, line_points,
                                      corners, current_length):
         corner_index = 0
         side_length = np.linalg.norm(corners[1] - corners[0])
         while index < len(line_points):
-            if line_points[index] < current_length + side_length:
+            if line_points[index] <= current_length + side_length:
                 point = self._translate_point_to_bondary(index, line_points,
                                                          corners, current_length,
                                                          corner_index, side_length)
@@ -197,6 +202,7 @@ class BoundaryDomain2D(BoundaryDomain):
         return new_point
 
     def normal(self, points):
+        points = super().return_space_variables_to_point_list(points)
         outline = self.domain.outline()
         self._compute_normals(outline)
         index = self._where_on_boundary(points, outline)     
@@ -253,7 +259,7 @@ class Circle(Domain2D):
         The radius of the circle.
     resolution : number, optional
         The resolution that should be used to approximate the circle with a polygon.
-        The number of used vertices is around 5*resolution.
+        The number of used vertices is around 4*resolution.
         See shapely for exact informations.
     """   
     def __new__(cls, space, center, radius, resolution=10, tol=1e-06):
@@ -279,9 +285,11 @@ class Ellipse(Domain2D):
     radius_x, radius_y : number or callable
         The 'radius' of the ellipse in each axis-direction.
     angle: number or callable
-        The angle between the x-axis and the ellipse.
+        The angle between the cart. x-axis and the 'x-axis' of the ellipse.
     resolution : number, optional
-        The number of vertices that should be used to approixmate the circle.
+        The number of vertices that should be used to approixmate the ellipse.
+        The number of used vertices is around 4*resolution.
+        See shapely for exact informations.
     """  
     def __new__(cls, space, center, radius_x, radius_y, angle=0,
                 resolution=10, tol=1e-06):
@@ -341,7 +349,7 @@ class Parallelogram(Domain2D):
         side_lengths = self._get_side_lengths(vertices)
         points = self.grid_in_box(n, side_lengths, vertices)
         points = super()._check_grid_enough_points(n, points)
-        return points.astype(np.float32)
+        return super().divide_points_to_space_variables(points)
 
     def _get_side_lengths(self, vertices):
         side_x = np.linalg.norm(vertices[3]-vertices[0])
@@ -379,7 +387,7 @@ class Polygon(Domain2D):
     """
     def __new__(cls, space, vertices=None, shapely_poly=None, tol=1e-06):
         if vertices is not None and isinstance(vertices, (list, np.ndarray)):
-            if any(callable(v) for v in vertices):
+            if callable(vertices):
                 params = {'vertices': vertices}
                 return LambdaDomain(class_=cls, params=params, space=space,
                                     dim=2, tol=tol) 
