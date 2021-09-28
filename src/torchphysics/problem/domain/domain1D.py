@@ -1,7 +1,8 @@
 import numpy as np
 import warnings
 
-from .domain import Domain, LambdaDomain, BoundaryDomain
+from .domain import Domain, BoundaryDomain
+from .lambdadomain import LambdaDomain
 from .domain0D import Point, PointCloud
 
 
@@ -20,9 +21,9 @@ class Interval(Domain):
     def __new__(cls, space, lower_bound, upper_bound, tol=1e-06):
         if callable(lower_bound) or callable(upper_bound):
             params = {'lower_bound': lower_bound, 'upper_bound': upper_bound}
-            return LambdaDomain(class_=cls, params=params, space=space, dim=1, tol=tol)
+            return LambdaDomain(constructor=cls, params=params, space=space, dim=1, tol=tol)
         return super(Interval, cls).__new__(cls)
-    
+
     def __init__(self, space, lower_bound, upper_bound, tol=1e-06):
         assert lower_bound < upper_bound
         super().__init__(space, dim=1, tol=tol)
@@ -31,8 +32,8 @@ class Interval(Domain):
 
     def is_inside(self, points):
         points = super()._check_single_point(points)
-        return ((self.lower_bound-self.tol < points[:]) 
-                & (points[:] < self.upper_bound+self.tol)).reshape(-1,1)
+        return ((self.lower_bound-self.tol < points[:])
+                & (points[:] < self.upper_bound+self.tol)).reshape(-1, 1)
 
     def bounding_box(self):
         return [self.lower_bound, self.upper_bound]
@@ -72,9 +73,9 @@ class Interval(Domain):
         if any(self._other_interval_inside(other)):
             min_bound = np.min([self.lower_bound, other.lower_bound])
             max_bound = np.max([self.upper_bound, other.upper_bound])
-            return Interval(space=self.space, lower_bound=min_bound, 
+            return Interval(space=self.space, lower_bound=min_bound,
                             upper_bound=max_bound, tol=new_tol)
-        else: # return a new object consisting of two intervals
+        else:  # return a new object consisting of two intervals
             return IntervalColletion(self.space, intervals=[self, other], tol=new_tol)
 
     def __sub__(self, other):
@@ -91,9 +92,9 @@ class Interval(Domain):
             if interval_1 is None:
                 warnings.warn("""After the cut the interval is empty!""")
                 break
-        return interval_1        
+        return interval_1
 
-    def _cut_two_intervals(self, interval_1, interval_2): 
+    def _cut_two_intervals(self, interval_1, interval_2):
         # first check if whole interval gets deleted
         if all(interval_2._other_interval_inside(interval_1)):
             warnings.warn("""After the cut the interval is empty!""")
@@ -104,12 +105,12 @@ class Interval(Domain):
         if any(bounds_inside):
             new_1, new_2 = self._create_new_cut_intervals(interval_1, interval_2,
                                                           new_tol, bounds_inside)
-            if all(bounds_inside): # cut in the middle
+            if all(bounds_inside):  # cut in the middle
                 return IntervalColletion(self.space, [new_1, new_2], tol=new_tol)
-            elif bounds_inside[0]: # cut a piece away
+            elif bounds_inside[0]:  # cut a piece away
                 return new_1
-            else: # cut a piece away
-                return new_2 
+            else:  # cut a piece away
+                return new_2
         return interval_1
 
     def _create_new_cut_intervals(self, interval_1, interval_2,
@@ -120,8 +121,8 @@ class Interval(Domain):
                              interval_2.lower_bound, tol=new_tol)
         if bounds_inside[1]:
             new_2 = Interval(self.space, interval_2.upper_bound,
-                             interval_1.upper_bound, tol=new_tol)                   
-        return new_1,new_2
+                             interval_1.upper_bound, tol=new_tol)
+        return new_1, new_2
 
     def __and__(self, other):
         assert other.dim == 1
@@ -129,8 +130,8 @@ class Interval(Domain):
             return other & self
         min_bound = np.max([self.lower_bound, other.lower_bound])
         max_bound = np.min([self.upper_bound, other.upper_bound])
-        return Interval(space=self.space, lower_bound=min_bound, 
-                        upper_bound=max_bound, tol=np.min([self.tol, other.tol]))   
+        return Interval(space=self.space, lower_bound=min_bound,
+                        upper_bound=max_bound, tol=np.min([self.tol, other.tol]))
 
     def _other_interval_inside(self, other):
         return self.is_inside(other.bounding_box())
@@ -139,14 +140,15 @@ class Interval(Domain):
 class IntervalColletion(Domain):
     """Handels the case of disjoint intervals, that can get created while
     cutting/unitting different intervals.
-    
+
     Parameters
     ----------
     space : Space
         The space in which this object lays.
     intervals : list of Interval
-        All disjoint intervals.   
+        All disjoint intervals.
     """
+
     def __init__(self, space, intervals, tol=1e-06):
         super().__init__(space, dim=1, tol=tol)
         self.intervals = intervals
@@ -159,7 +161,7 @@ class IntervalColletion(Domain):
         for i in self.intervals:
             bounds[index] = i.bounding_box()
             self.length += (bounds[index][1] - bounds[index][0])
-            index += 1    
+            index += 1
         self.lower_bound = np.min(bounds[:, 0])
         self.upper_bound = np.max(bounds[:, 1])
 
@@ -169,7 +171,7 @@ class IntervalColletion(Domain):
             in_i = i.is_inside(points)
             index = np.where(in_i)[0]
             inside[index] = True
-        return inside 
+        return inside
 
     def bounding_box(self):
         return [self.lower_bound, self.upper_bound]
@@ -207,7 +209,7 @@ class IntervalColletion(Domain):
     def boundary(self):
         bounds = np.zeros((len(self.intervals), 2))
         for i in range(len(self.intervals)):
-            bounds[i] = self.intervals[i].bounding_box()        
+            bounds[i] = self.intervals[i].bounding_box()
         return BoundaryDomain1D(self, points=bounds.flatten().reshape(-1, 1))
 
     @property
@@ -262,7 +264,7 @@ class IntervalColletion(Domain):
     def _change_other_to_collection(self, other):
         if isinstance(other, Interval):
             other = IntervalColletion(space=other.space,
-                                      intervals=[other], tol=other.tol)                
+                                      intervals=[other], tol=other.tol)
         return other
 
     def __and__(self, other):
@@ -279,22 +281,23 @@ class IntervalColletion(Domain):
 class BoundaryDomain1D(BoundaryDomain):
     """Handels the boundary of intervals.
     """
+
     def __init__(self, domain, points):
         super().__init__(domain)
         self.domain = domain
         if isinstance(points, (list, np.ndarray)):
-            self.point_object = PointCloud(space=domain.space, 
+            self.point_object = PointCloud(space=domain.space,
                                            coord_list=points, tol=domain.tol)
         else:
             self.point_object = Point(space=domain.space,
                                       coord=points, tol=domain.tol)
-    
+
     def is_inside(self, points):
         return self.point_object.is_inside(points)
 
     def bounding_box(self):
         return self.domain.bounding_box()
-    
+
     def sample_grid(self, n):
         return self.point_object.sample_grid(n)
 
@@ -312,9 +315,9 @@ class BoundaryDomain1D(BoundaryDomain):
         if isinstance(self.domain, Interval):
             dist = np.linalg.norm(points - self.domain.lower_bound, axis=1)
             return np.where(dist <= self.tol)[0]
-        else: # IntervalCollection
+        else:  # IntervalCollection
             index = []
             for i in self.domain.intervals:
                 dist = np.linalg.norm(points - i.lower_bound, axis=1)
                 index.extend(np.where(dist <= self.tol)[0])
-            return index               
+            return index

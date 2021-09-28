@@ -2,6 +2,11 @@ import inspect
 import numpy as np
 
 class UserFunction:
+    def __new__(cls, fun):
+        if isinstance(fun, cls):
+            return fun
+        return super(UserFunction, cls).__new__(cls)
+
     def __init__(self, fun):
         self.fun = fun
 
@@ -18,12 +23,14 @@ class UserFunction:
         f_defaults = inspect.getfullargspec(self.fun).defaults
         f_kwonlyargs = inspect.getfullargspec(self.fun).kwonlyargs
         f_kwonlydefaults = inspect.getfullargspec(self.fun).kwonlydefaults
-
         # NOTE: By above check, there should not be kwonlyargs. However, we still catch
         # this case here.
         self.args = f_args + f_kwonlyargs
-        # defaults always align at the end
-        self.defaults = {self.f_args[-i]: f_defaults[-i] for i in range(len(f_defaults), 0, -1)}
+
+        # defaults always align at the end of the args
+        self.defaults = {self.f_args[-i]: f_defaults[-i] for i in range(len(f_defaults),
+                                                                        0,
+                                                                        -1)}
         self.defaults.update(f_kwonlydefaults)
 
     def __call__(self,  vectorize=False, **args):

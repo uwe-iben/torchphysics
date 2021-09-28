@@ -1,11 +1,11 @@
-from .domain import Domain
+from .domain import Domain, ProductDomain
+
 from ...utils.user_fun import UserFunction
-import inspect
-import functools
+import copy
 
 
 class LambdaDomain(Domain):
-    def __init__(self, constructor, params, space, dim, necessary_variables=None):
+    def __init__(self, constructor, params, space, dim):
         """
         params : A dictionary containing all the params needed to create the given
             domain_class domain
@@ -15,49 +15,61 @@ class LambdaDomain(Domain):
         self.params = params
 
         # create a set of variables/spaces that this domain needs to be properly defined
-        if necessary_variables is not None:
-            self.necessary_variables = necessary_variables
-        else:
-            self.necessary_variables = set()
-            for key in params:
-                if callable(params[key]):
-                    if '*' in str(inspect.signature(params[key])):
-                        raise ValueError("""Functions in Domain definitions should use proper keys,
-                                            as defined in their spaces.""")
-                    params[key] = UserFunction(params[key])
-                    for k in params[key].necessary_args:
-                        self.necessary_variables.add(k)
+        self.necessary_variables = set()
+        for key in self.params:
+            if callable(self.params[key]):
+                self.params[key] = UserFunction(params[key])
+                for k in self.params[key].necessary_args:
+                    self.necessary_variables.add(k)
+        assert not any(var in self.necessary_variables for var in self.space)
 
     def __call__(self, **data):
         """
-        Slice the domain along given axis, i.e. for given (partial) data
+        (Partially) evaluate given lambda functions.
         """
+        evaluated_params = {}
+        for key in self.params:
+            evaluated_params[key] = self._call_param(self.params[key], data)
+        if all(var in data for var in self.necessary_variables):
+            return self.constructor(**evaluated_params)
+        else:
+            return LambdaDomain(constructor=self.constructor,
+                                params=evaluated_params,
+                                space=self.space,
+                                dim=self.dim)
 
-    def _call_param(param, args):
+    def _call_param(self, param, args):
         if callable(param):
             if all(arg in args for arg in param.necessary_args):
                 return param(**args)
             else:
-                param.set_default(**args)
+                # to avoid manipulation of given param obj, we create a copy
+                copy.deepcopy(param).set_default(**args)
         return param
 
     def __mul__(self, other):
-        if not isinstance(other, LambdaDomain) and all(var in other.space for var in self.necessary_variables):
-            return LambdaProductDomain(self, other)
-        if isinstance(other, LambdaDomain):
-            return LambdaDomain
-
-    def _get_necessary_args(fun):
-        """
-        Returns the (positional or keyword-)arguments of fun which don't supply
-        default values
-        NOTE: we need a whole library utils part for user-function handling
-        """
-
+        return LambdaProductDomain(self, other)
 
 
 class LambdaProductDomain(ProductDomain):
-    def __init__(self, other):
+
+    def __new__(cls, domain_a, domain_b):
+        # case handling:
+        if isinstance(domain_a, LambdaDomain) and isinstance(domain_b, LambdaDomain):
+            if any(var in domain_a.necessary_variables for var in domain_b.space):
+                if any(var in domain_b.necessary_variables for var in domain_a.space):
+                    raise ValueError("""Dependencies of LambdaDomain should always be
+                        in a single direction. Please define domains succesively.""")
+                else:  # domain_a is build upon domain_b
+                    
+        if not isinstance(other, LambdaDomain) and all(var in other.space for var in self.necessary_variables):
+            return LambdaProductDomain(self, other)
+        if isinstance(other, LambdaDomain):
+            return LambdaDomain(constructor=constr, params=)
+
+        return super().__new__()
+
+    def __init__(self, domain_a, domain_b):
         super().__init__()
         if isinstance(self, LambdaDomain):
 
