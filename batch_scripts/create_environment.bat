@@ -6,4 +6,6 @@ call git config filter.jupyter_clean.clean "$jupyter_path nbconvert --stdin --st
 
 call conda env create -p ../_venv --file environment.yml
 
+call pip install -e .[all]
+
 call conda activate ../_venv
